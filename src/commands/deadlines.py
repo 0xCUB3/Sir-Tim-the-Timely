@@ -237,65 +237,37 @@ async def deadline_help(ctx: arc.GatewayContext) -> None:
     await ctx.respond(embed=embed)
 
 async def send_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict], title: str) -> None:
-    """Format and send a list of deadlines as embeds."""
-    # Sort by date
+    """Format and send a list of deadlines as embeds with pagination to avoid lengthy fields."""
+    # Sort by due date
     sorted_deadlines = sorted(deadlines, key=lambda x: x['due_date'])
-    
-    # Create embed
-    embed = hikari.Embed(
-        title=f"📅 {title}",
-        description=f"Found {len(deadlines)} deadline(s)",
-        color=0x4285F4,
-        timestamp=datetime.now()
-    )
-    
-    # Group by month
-    months = {}
-    for deadline in sorted_deadlines:
-        due_date = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00'))
-        month_name = due_date.strftime("%B")
-        
-        if month_name not in months:
-            months[month_name] = []
-        
-        months[month_name].append(deadline)
-    
-    # Add fields for each month
-    for month_name, month_deadlines in months.items():
-        deadline_texts = []
-        
-        for deadline in month_deadlines:
-            due_date = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00'))
-            day = due_date.strftime("%d")
-            
-            critical_marker = "🚨 " if deadline.get('is_critical') else ""
-            deadline_text = f"**{day}**: {critical_marker}[ID:{deadline['id']}] {deadline['title']}"
-            
-            category = deadline.get('category')
-            if category:
-                deadline_text += f" `{category}`"
-            
-            deadline_texts.append(deadline_text)
-        
+    total = len(sorted_deadlines)
+    # Pagination settings
+    per_page = 8
+    pages = [sorted_deadlines[i:i+per_page] for i in range(0, total, per_page)]
+    # Send each page as a separate embed
+    for idx, page in enumerate(pages):
+        embed = hikari.Embed(
+            title=f"📅 {title} (Page {idx+1}/{len(pages)})",
+            description=f"Showing {idx*per_page+1}-{idx*per_page+len(page)} of {total} deadlines",
+            color=0x4285F4,
+            timestamp=datetime.now().astimezone()
+        )
+        lines = []
+        for dl in page:
+            due = datetime.fromisoformat(dl['due_date'].replace('Z', '+00:00'))
+            day = due.strftime("%b %d")
+            marker = "🚨 " if dl.get('is_critical') else ""
+            text = f"{marker}[ID:{dl['id']}] {dl['title']} - {day}"
+            if dl.get('category'):
+                text += f" `{dl['category']}`"
+            lines.append(text)
         embed.add_field(
-            name=month_name,
-            value="\n".join(deadline_texts),
+            name="Deadlines",
+            value="\n".join(lines),
             inline=False
         )
-    
-    embed.add_field(
-        name="How to Use",
-        value=(
-            "• Get details: `/deadlines search <deadline title>`\n"
-            "• Mark complete: `/deadlines completed <ID>`\n"
-            "• Set reminder: `/deadlines remind <ID> <hours>`"
-        ),
-        inline=False
-    )
-    
-    embed.set_footer(text="Sir Tim the Timely • MIT Deadline Bot")
-    
-    await ctx.respond(embed=embed)
+        embed.set_footer(text="Sir Tim the Timely • MIT Deadline Bot")
+        await ctx.respond(embed=embed)
 
 @arc.loader
 def load(client: arc.GatewayClient) -> None:
