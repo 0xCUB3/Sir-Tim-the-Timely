@@ -106,8 +106,20 @@ class DatabaseManager:
                           start_date: Optional[datetime] = None,
                           category: Optional[str] = None, url: Optional[str] = None,
                           is_critical: bool = False, is_event: bool = False) -> int:
-        """Add a new deadline to the database."""
+        """Add a new deadline to the database, avoiding duplicates."""
         async with self._connection.cursor() as cursor:
+            # Check for exact duplicates first
+            await cursor.execute("""
+                SELECT id FROM deadlines 
+                WHERE title = ? AND due_date = ? AND category = ?
+            """, (title, due_date, category))
+            
+            existing = await cursor.fetchone()
+            if existing:
+                logger.info(f"Duplicate deadline found: {title} - {due_date}")
+                return existing[0]
+            
+            # Insert new deadline using INSERT OR IGNORE for extra safety
             await cursor.execute("""
                 INSERT INTO deadlines (title, description, start_date, due_date, category, url, is_critical, is_event)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
