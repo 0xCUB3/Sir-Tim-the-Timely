@@ -1,6 +1,7 @@
 # Core Dependencies
 hikari>=2.3.3
 hikari-arc>=1.6.0
+hikari-miru>=3.4.0
 
 # AI Integration
 google-generativeai>=0.8.0

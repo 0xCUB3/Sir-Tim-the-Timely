@@ -10,6 +10,8 @@ from typing import List, Dict, Optional
 
 import hikari
 import arc
+import miru
+from miru.ext import nav
 
 from ..database import DatabaseManager
 from ..ai_handler import AIHandler
@@ -109,40 +111,6 @@ async def search_deadlines(ctx: arc.GatewayContext) -> None:
         await ctx.respond("Sorry, something went wrong while searching for deadlines.")
 
 @deadlines.include
-@arc.slash_subcommand("completed", "Mark a deadline as completed")
-async def mark_completed(ctx: arc.GatewayContext) -> None:
-    """Mark a deadline as completed for the user."""
-    db_manager = ctx.client.get_type_dependency(DatabaseManager)
-    deadline_id = 1  # Default ID
-    
-    try:
-        # Check if deadline exists
-        deadlines = await db_manager.get_deadlines()
-        deadline = next((d for d in deadlines if d['id'] == deadline_id), None)
-        
-        if not deadline:
-            await ctx.respond("Deadline not found. Please check the ID and try again.")
-            return
-        
-        # Mark as completed
-        await db_manager.mark_deadline_completed(ctx.author.id, deadline_id, True)
-        
-        embed = hikari.Embed(
-            title="✅ Deadline Marked as Completed",
-            description=f"You've completed: **{deadline['title']}**",
-            color=0x00FF00,
-            timestamp=datetime.now()
-        )
-        
-        embed.set_footer(text="Sir Tim the Timely • Progress Tracker")
-        
-        await ctx.respond(embed=embed)
-        
-    except Exception as e:
-        logger.error(f"Error marking deadline as completed: {e}")
-        await ctx.respond("Sorry, something went wrong while updating your deadline status.")
-
-@deadlines.include
 @arc.slash_subcommand("remind", "Set a personal reminder for a deadline")
 async def set_reminder(ctx: arc.GatewayContext) -> None:
     """Set a personal reminder for a deadline."""
@@ -198,7 +166,6 @@ async def deadline_help(ctx: arc.GatewayContext) -> None:
             "• `/deadlines list` - List all deadlines\n"
             "• `/deadlines next` - Show deadlines in the next 7 days\n"
             "• `/deadlines search` - Search deadlines with natural language\n"
-            "• `/deadlines completed` - Mark deadline as completed\n"
             "• `/deadlines remind` - Set personal reminder\n"
         ),
         inline=False
@@ -237,23 +204,41 @@ async def deadline_help(ctx: arc.GatewayContext) -> None:
     await ctx.respond(embed=embed)
 
 async def send_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict], title: str) -> None:
-    """Format and send a list of deadlines as embeds with pagination to avoid lengthy fields."""
+    """Format and send a list of deadlines as interactive embeds with pagination buttons."""
     # Sort by due date
     sorted_deadlines = sorted(deadlines, key=lambda x: x['due_date'])
     total = len(sorted_deadlines)
+    
+    if total == 0:
+        embed = hikari.Embed(
+            title=f"📅 {title}",
+            description="No deadlines found.",
+            color=0x4285F4,
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text="Sir Tim the Timely • MIT Deadline Bot")
+        await ctx.respond(embed=embed)
+        return
+    
     # Pagination settings
     per_page = 8
-    pages = [sorted_deadlines[i:i+per_page] for i in range(0, total, per_page)]
-    # Send each page as a separate embed
-    for idx, page in enumerate(pages):
+    pages = []
+    
+    # Create pages
+    for i in range(0, total, per_page):
+        page_deadlines = sorted_deadlines[i:i+per_page]
+        page_num = (i // per_page) + 1
+        total_pages = (total + per_page - 1) // per_page
+        
         embed = hikari.Embed(
-            title=f"📅 {title} (Page {idx+1}/{len(pages)})",
-            description=f"Showing {idx*per_page+1}-{idx*per_page+len(page)} of {total} deadlines",
+            title=f"📅 {title}",
+            description=f"Page {page_num}/{total_pages} • Showing {i+1}-{min(i+per_page, total)} of {total} deadlines",
             color=0x4285F4,
-            timestamp=datetime.now().astimezone()
+            timestamp=datetime.now()
         )
+        
         lines = []
-        for dl in page:
+        for dl in page_deadlines:
             due = datetime.fromisoformat(dl['due_date'].replace('Z', '+00:00'))
             day = due.strftime("%b %d")
             marker = "🚨 " if dl.get('is_critical') else ""
@@ -261,13 +246,33 @@ async def send_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict], tit
             if dl.get('category'):
                 text += f" `{dl['category']}`"
             lines.append(text)
+        
         embed.add_field(
             name="Deadlines",
             value="\n".join(lines),
             inline=False
         )
+        
         embed.set_footer(text="Sir Tim the Timely • MIT Deadline Bot")
-        await ctx.respond(embed=embed)
+        pages.append(embed)
+    
+    if len(pages) == 1:
+        # Single page, no need for navigation
+        await ctx.respond(embed=pages[0])
+    else:
+        # Multiple pages, use interactive navigation
+        # Get the miru client from the context
+        miru_client = ctx.client.get_type_dependency(miru.Client)
+        
+        # Create custom button set with simple navigation - First, Previous, Indicator, Next, Last, Stop
+        buttons = [nav.FirstButton(), nav.PrevButton(), nav.IndicatorButton(), nav.NextButton(), nav.LastButton(), nav.StopButton()]
+        
+        navigator = nav.NavigatorView(pages=pages, items=buttons, timeout=300)  # 5 minute timeout
+        builder = await navigator.build_response_async(miru_client)
+        
+        # Arc's respond_with_builder handles deferred interactions automatically
+        await ctx.respond_with_builder(builder)
+        miru_client.start_view(navigator)
 
 @arc.loader
 def load(client: arc.GatewayClient) -> None:

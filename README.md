@@ -33,7 +33,6 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 - `/deadlines search <query>` - Search deadlines with natural language
 - `/deadlines next [days]` - Show deadlines in the next X days (default: 7)
 - `/deadlines remind <deadline_id> <time>` - Set personal reminder
-- `/deadlines completed <deadline_id>` - Mark deadline as completed
 - `/deadlines help` - Show detailed help and FAQ
 
 #### Utility Commands
@@ -43,9 +42,8 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 - `/feedback <message>` - Send feedback to bot developers
 
 ### 📊 Dashboard & Analytics
-- **Personal Dashboard**: View your completed vs pending deadlines
 - **Progress Tracking**: Visual progress bars for multi-step deadlines
-- **Statistics**: Server-wide deadline completion rates (anonymized)
+- **Statistics**: Server-wide deadline statistics (anonymized)
 - **Export Options**: Export personal deadline calendar to Google Calendar/iCal
 
 ### 🏫 MIT-Specific Features

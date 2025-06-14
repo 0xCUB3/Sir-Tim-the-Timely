@@ -12,6 +12,7 @@ from pathlib import Path
 
 import hikari
 import arc
+import miru
 from dotenv import load_dotenv
 
 from src.database import DatabaseManager
@@ -59,6 +60,9 @@ class SirTimBot:
         # Initialize Arc client
         self.client = arc.GatewayClient(self.bot)
         
+        # Initialize Miru client for interactive components
+        self.miru_client = miru.Client(self.bot)
+        
         # Initialize components
         self.db_manager = None
         self.scraper = None
@@ -95,6 +99,7 @@ class SirTimBot:
             
             # Set up dependency injection
             self.client.set_type_dependency(DatabaseManager, self.db_manager)
+            self.client.set_type_dependency(miru.Client, self.miru_client)
             if self.ai_handler:
                 self.client.set_type_dependency(AIHandler, self.ai_handler)
             

@@ -148,25 +148,16 @@ Be helpful, informative, and reassuring.
     async def suggest_deadline_priorities(self, user_id: int) -> str:
         """Suggest deadline priorities for a specific user."""
         try:
-            # Get user's deadline status
-            user_deadlines = await self.db_manager.get_user_deadline_status(user_id)
+            # Get upcoming deadlines
             all_deadlines = await self.db_manager.get_upcoming_deadlines(30)
             
-            # Filter out completed deadlines
-            incomplete_deadlines = []
-            completed_ids = {ud['deadline_id'] for ud in user_deadlines if ud['completed']}
-            
-            for deadline in all_deadlines:
-                if deadline['id'] not in completed_ids:
-                    incomplete_deadlines.append(deadline)
-            
-            if not incomplete_deadlines:
-                return "Congratulations! You're all caught up on your deadlines! 🎉"
+            if not all_deadlines:
+                return "Great news! There are no upcoming deadlines in the next 30 days! 🎉"
             
             prompt = f"""
-Based on these incomplete MIT deadlines for a first-year student, suggest priorities:
+Based on these upcoming MIT deadlines for a first-year student, suggest priorities:
 
-{self._format_deadlines_for_prompt(incomplete_deadlines)}
+{self._format_deadlines_for_prompt(all_deadlines)}
 
 Create a prioritized action plan that:
 1. Identifies the most urgent items (within 1-2 weeks)
