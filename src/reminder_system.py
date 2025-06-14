@@ -7,8 +7,8 @@ Handles automated reminders and notifications for deadlines.
 import logging
 import asyncio
 import os
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Set, Any
+from datetime import datetime
+from typing import List, Dict, Set, Any
 import pytz
 
 import hikari
@@ -83,34 +83,62 @@ class ReminderSystem:
     async def _send_daily_reminders(self):
         """Send daily deadline reminders to all configured channels."""
         try:
-            # Get deadlines for the next 7 days
-            upcoming_deadlines = await self.db_manager.get_upcoming_deadlines(7)
-            
-            if not upcoming_deadlines:
+            # Get upcoming items for the next 7 days
+            upcoming_items = await self.db_manager.get_upcoming_deadlines(7)
+            # Separate deadlines and events
+            upcoming_deadlines = [item for item in upcoming_items if not item.get('is_event')]
+            upcoming_events = [item for item in upcoming_items if item.get('is_event')]
+            if not upcoming_deadlines and not upcoming_events:
                 return
-            
-            # Group deadlines by urgency
+
+            # Group deadlines by urgency and collect event texts
             today = datetime.now(self.default_timezone).date()
-            urgent = []  # Due within 2 days
-            coming_up = []  # Due within 7 days
-            
+            urgent: List[Dict] = []       # Due within 2 days
+            coming_up: List[Dict] = []    # Due within 7 days
+            event_texts: List[str] = []
+
+            # Process deadlines
             for deadline in upcoming_deadlines:
-                due_date = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00')).date()
-                days_until = (due_date - today).days
-                
+                due = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00')).date()
+                days_until = (due - today).days
                 if days_until <= 2:
                     urgent.append(deadline)
                 else:
                     coming_up.append(deadline)
-            
-            # Create reminder message
+
+            # Process events
+            for event in upcoming_events:
+                # Parse start and end dates
+                start = None
+                if event.get('start_date'):
+                    start = datetime.fromisoformat(event['start_date'].replace('Z', '+00:00')).date()
+                end = datetime.fromisoformat(event['due_date'].replace('Z', '+00:00')).date()
+                # Format event message
+                if start:
+                    if start == today:
+                        event_texts.append(
+                            f"• **{event['title']}** starts today and runs until {end.strftime('%B %d')}"
+                        )
+                    else:
+                        days_start = (start - today).days
+                        event_texts.append(
+                            f"• **{event['title']}** starts in {days_start} day{'s' if days_start != 1 else ''} (until {end.strftime('%B %d')})"
+                        )
+                else:
+                    event_texts.append(
+                        f"• **{event['title']}** happening until {end.strftime('%B %d')}"
+                    )
+
+            # Build and broadcast embed
             embed = self._create_daily_reminder_embed(urgent, coming_up)
-            
-            # Send to all configured channels
+            if event_texts:
+                embed.add_field(
+                    name="🎉 Upcoming Events",
+                    value="\n".join(event_texts),
+                    inline=False
+                )
             await self._broadcast_reminder(embed, "📅 Daily Deadline Reminder")
-            
-            logger.info(f"Sent daily reminders for {len(upcoming_deadlines)} deadlines")
-            
+            logger.info(f"Sent daily reminders: {len(urgent)} urgent, {len(coming_up)} upcoming, {len(event_texts)} events")
         except Exception as e:
             logger.error(f"Error sending daily reminders: {e}")
     
@@ -119,8 +147,11 @@ class ReminderSystem:
         try:
             # Get deadlines for the next 48 hours
             upcoming_deadlines = await self.db_manager.get_upcoming_deadlines(2)
-            
+             
             for deadline in upcoming_deadlines:
+                # skip events for urgent reminders
+                if deadline.get('is_event'):
+                    continue
                 due_date = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00'))
                 hours_until = (due_date - now).total_seconds() / 3600
                 
@@ -151,7 +182,7 @@ class ReminderSystem:
                 title="🚨 Urgent Deadline Alert!",
                 description=f"**{deadline['title']}** is due in {time_text}!",
                 color=0xFF4444 if hours <= 6 else 0xFF8800,
-                timestamp=datetime.now()
+                timestamp=datetime.now().astimezone()
             )
             
             due_date = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00'))
@@ -200,7 +231,7 @@ class ReminderSystem:
             title="📅 Daily Deadline Reminder",
             description="Here's what's coming up for MIT Class of 2029:",
             color=0x4285F4,
-            timestamp=datetime.now()
+            timestamp=datetime.now().astimezone()
         )
         
         if urgent:
@@ -289,7 +320,7 @@ class ReminderSystem:
                 title="🧪 Test Reminder",
                 description="This is a test of the Sir Tim reminder system!",
                 color=0x00FF00,
-                timestamp=datetime.now()
+                timestamp=datetime.now().astimezone()
             )
             
             embed.add_field(

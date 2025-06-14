@@ -105,36 +105,34 @@ class MITDeadlineScraper:
         for section in sections:
             month_name = section.get_text().strip()
             month_num = self._parse_month(month_name)
-            
             if not month_num:
                 continue
-            
-            # Find all deadline items under this section
-            current_element = section.next_sibling
-            
-            while current_element:
-                # Check if we've reached the next section
-                if isinstance(current_element, Tag):
-                    if current_element.name in ['h3', 'h4']:
-                        text_content = current_element.get_text() if hasattr(current_element, 'get_text') else ''
-                        if re.search(r'(May|June|July|August|September|October|November|December)', text_content, re.IGNORECASE):
-                            break
-                    
-                    # Extract text and look for deadline patterns
-                    text = current_element.get_text().strip()
-                    deadline_info = self._extract_deadline_info(text, month_num, current_year)
-                    
-                    if deadline_info:
-                        # Extract any links
-                        links = current_element.find_all('a')
-                        if links and isinstance(links[0], Tag):
-                            href = links[0].get('href')
-                            if href and isinstance(href, str):
-                                deadline_info['url'] = urljoin(self.base_url, href)
-                        
-                        deadlines.append(deadline_info)
-                
-                current_element = current_element.next_sibling
+            # Look for the next <ul> sibling containing list items
+            sibling = section.find_next_sibling()
+            # Find the next UL tag
+            ul = None
+            while sibling:
+                if isinstance(sibling, Tag) and sibling.name == 'ul':
+                    ul = sibling
+                    break
+                sibling = sibling.find_next_sibling()
+            if not ul:
+                continue
+            # Process each list item
+            for li in ul.find_all('li'):
+                if not isinstance(li, Tag):
+                    continue
+                text = li.get_text().strip()
+                info = self._extract_deadline_info(text, month_num, current_year)
+                if not info:
+                    continue
+                # Attach first link if present
+                link = li.find('a')
+                if isinstance(link, Tag):
+                    href = link.get('href')
+                    if href:
+                        info['url'] = urljoin(self.base_url, href)
+                deadlines.append(info)
         
         return deadlines
     
@@ -155,28 +153,35 @@ class MITDeadlineScraper:
             
             for match in matches:
                 try:
-                    # Parse the date
+                    groups = match.groups()
+                    # Parse end date
                     due_date = self._parse_date_from_match(match, month, year)
-                    
+                    # Determine if this is an event with a range
+                    if len(groups) == 4:
+                        # Parse start date
+                        start_month = self._parse_month(groups[0]) or month
+                        start_day = int(groups[1])
+                        start_date = datetime(year, start_month, start_day, 0, 0, 0)
+                        is_event = True
+                    else:
+                        start_date = None
+                        is_event = False
                     if due_date:
                         # Extract title and description
                         title, description = self._extract_title_description(text, match)
-                        
-                        # Determine category
+                        # Determine category and criticality
                         category = self._categorize_deadline(text)
-                        
-                        # Determine if critical
                         is_critical = self._is_critical_deadline(text)
-                        
                         return {
                             'title': title,
                             'description': description,
+                            'start_date': start_date,
                             'due_date': due_date,
                             'category': category,
                             'is_critical': is_critical,
+                            'is_event': is_event,
                             'url': None  # Will be set by caller if found
                         }
-                        
                 except Exception as e:
                     logger.debug(f"Failed to parse date from match {match.group()}: {e}")
                     continue

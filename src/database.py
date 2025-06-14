@@ -7,9 +7,13 @@ Handles all database operations for deadlines, user preferences, and reminders.
 import logging
 import sqlite3
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Union
-from datetime import datetime, timezone
+from typing import List, Dict, Optional, Any
+from datetime import datetime
+# Register datetime adapter and converter to override deprecated defaults
+sqlite3.register_adapter(datetime, lambda dt: dt.isoformat())
+sqlite3.register_converter('DATETIME', lambda s: datetime.fromisoformat(s.decode()))
 import aiosqlite
+
 
 logger = logging.getLogger("sir_tim.database")
 
@@ -25,6 +29,8 @@ class DatabaseManager:
         """Initialize the database and create tables."""
         self._connection = await aiosqlite.connect(self.db_path)
         await self._create_tables()
+        # Migrate legacy schema: add new columns if missing
+        await self._migrate_schema()
         logger.info(f"Database initialized at {self.db_path}")
     
     async def close(self):
@@ -42,10 +48,12 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
                     description TEXT,
+                    start_date DATETIME,
                     due_date DATETIME NOT NULL,
                     category TEXT,
                     url TEXT,
                     is_critical BOOLEAN DEFAULT FALSE,
+                    is_event BOOLEAN DEFAULT FALSE,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
@@ -63,20 +71,6 @@ class DatabaseManager:
                 )
             """)
             
-            # User deadline tracking
-            await cursor.execute("""
-                CREATE TABLE IF NOT EXISTS user_deadlines (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    deadline_id INTEGER NOT NULL,
-                    completed BOOLEAN DEFAULT FALSE,
-                    reminder_time DATETIME,
-                    notes TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (deadline_id) REFERENCES deadlines (id)
-                )
-            """)
             
             # Server settings
             await cursor.execute("""
@@ -94,14 +88,30 @@ class DatabaseManager:
         
         logger.info("Database tables created successfully")
     
-    async def add_deadline(self, title: str, description: str, due_date: datetime, 
-                          category: Optional[str] = None, url: Optional[str] = None, is_critical: bool = False) -> int:
+    async def _migrate_schema(self):
+        """Ensure new columns exist in deadlines table for migrations."""
+        # Fetch existing columns
+        async with self._connection.execute("PRAGMA table_info(deadlines)") as cursor:
+            rows = await cursor.fetchall()
+        existing = {row[1] for row in rows}
+        # Add missing columns
+        async with self._connection.cursor() as cursor:
+            if 'start_date' not in existing:
+                await cursor.execute("ALTER TABLE deadlines ADD COLUMN start_date DATETIME")
+            if 'is_event' not in existing:
+                await cursor.execute("ALTER TABLE deadlines ADD COLUMN is_event BOOLEAN DEFAULT 0")
+            await self._connection.commit()
+    
+    async def add_deadline(self, title: str, description: str, due_date: datetime,
+                          start_date: Optional[datetime] = None,
+                          category: Optional[str] = None, url: Optional[str] = None,
+                          is_critical: bool = False, is_event: bool = False) -> int:
         """Add a new deadline to the database."""
         async with self._connection.cursor() as cursor:
             await cursor.execute("""
-                INSERT INTO deadlines (title, description, due_date, category, url, is_critical)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (title, description, due_date, category, url, is_critical))
+                INSERT INTO deadlines (title, description, start_date, due_date, category, url, is_critical, is_event)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (title, description, start_date, due_date, category, url, is_critical, is_event))
             
             await self._connection.commit()
             return cursor.lastrowid or 0
@@ -141,7 +151,7 @@ class DatabaseManager:
         params = []
         
         for key, value in kwargs.items():
-            if key in ['title', 'description', 'due_date', 'category', 'url', 'is_critical']:
+            if key in ['title', 'description', 'start_date', 'due_date', 'category', 'url', 'is_critical', 'is_event']:
                 set_clauses.append(f"{key} = ?")
                 params.append(value)
         
@@ -230,56 +240,7 @@ class DatabaseManager:
             await self._connection.commit()
             return True
     
-    async def mark_deadline_completed(self, user_id: int, deadline_id: int, completed: bool = True) -> bool:
-        """Mark a deadline as completed for a user."""
-        async with self._connection.cursor() as cursor:
-            # Check if record exists
-            await cursor.execute("""
-                SELECT id FROM user_deadlines 
-                WHERE user_id = ? AND deadline_id = ?
-            """, (user_id, deadline_id))
-            
-            exists = await cursor.fetchone()
-            
-            if exists:
-                # Update existing record
-                await cursor.execute("""
-                    UPDATE user_deadlines 
-                    SET completed = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE user_id = ? AND deadline_id = ?
-                """, (completed, user_id, deadline_id))
-            else:
-                # Insert new record
-                await cursor.execute("""
-                    INSERT INTO user_deadlines (user_id, deadline_id, completed)
-                    VALUES (?, ?, ?)
-                """, (user_id, deadline_id, completed))
-            
-            await self._connection.commit()
-            return True
     
-    async def get_user_deadline_status(self, user_id: int, deadline_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get deadline completion status for a user."""
-        query = """
-            SELECT ud.*, d.title, d.due_date, d.category
-            FROM user_deadlines ud
-            JOIN deadlines d ON ud.deadline_id = d.id
-            WHERE ud.user_id = ?
-        """
-        params = [user_id]
-        
-        if deadline_id:
-            query += " AND ud.deadline_id = ?"
-            params.append(deadline_id)
-        
-        query += " ORDER BY d.due_date ASC"
-        
-        async with self._connection.cursor() as cursor:
-            await cursor.execute(query, params)
-            rows = await cursor.fetchall()
-            
-            columns = [description[0] for description in cursor.description]
-            return [dict(zip(columns, row)) for row in rows]
     
     async def search_deadlines(self, query: str) -> List[Dict[str, Any]]:
         """Search deadlines by title or description."""
@@ -298,14 +259,20 @@ class DatabaseManager:
             return [dict(zip(columns, row)) for row in rows]
     
     async def get_upcoming_deadlines(self, days: int = 7) -> List[Dict[str, Any]]:
-        """Get deadlines in the next N days."""
+        """Get deadlines and events in the next N days."""
         async with self._connection.cursor() as cursor:
-            await cursor.execute("""
+            query = f"""
                 SELECT * FROM deadlines
-                WHERE due_date BETWEEN datetime('now') AND datetime('now', '+{} days')
+                WHERE (
+                    due_date BETWEEN datetime('now') AND datetime('now', '+{days} days')
+                ) OR (
+                    is_event = 1
+                    AND start_date IS NOT NULL
+                    AND start_date BETWEEN datetime('now') AND datetime('now', '+{days} days')
+                )
                 ORDER BY due_date ASC
-            """.format(days))
-            
+            """
+            await cursor.execute(query)
             rows = await cursor.fetchall()
             columns = [description[0] for description in cursor.description]
             return [dict(zip(columns, row)) for row in rows]

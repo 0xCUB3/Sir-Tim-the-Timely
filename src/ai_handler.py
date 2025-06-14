@@ -184,6 +184,31 @@ Be specific, actionable, and supportive.
         except Exception as e:
             logger.error(f"Error suggesting priorities for user {user_id}: {e}")
             return "I'm having trouble analyzing your deadlines right now. Try using the `/deadlines next` command to see what's coming up."
+    async def parse_deadline_text(self, text: str, base_url: str, current_year: int) -> Optional[Dict[str, Any]]:
+        """Use LLM to parse a raw deadline/event text into structured data."""
+        try:
+            prompt = f"""
+You are an assistant that extracts structured deadline and event data from raw text items.
+For the following text, return a JSON object with fields:
+- title (string)
+- description (string)
+- due_date (ISO format, end date for ranges)
+- start_date (ISO format or null)
+- is_event (boolean)
+- category (one of Medical, Academic, Housing, Financial, Orientation, Administrative, Registration, General)
+- is_critical (boolean)
+- url (string or null)
+Assume current year is {current_year}. Use base_url to complete relative URLs if any.
+Text: "{text}"
+Only output the JSON without any additional text.
+"""
+            response = await self._generate_response(prompt)
+            import json
+            data = json.loads(response)
+            return data
+        except Exception as e:
+            logger.error(f"Failed to parse text via LLM: {e}")
+            return None
     
     async def _get_relevant_deadlines(self, query: str) -> List[Dict]:
         """Get deadlines relevant to the query."""
