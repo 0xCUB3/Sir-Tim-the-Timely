@@ -9,6 +9,7 @@ from datetime import datetime
 
 import hikari
 import arc
+from hikari.errors import NotFoundError, BadRequestError
 
 from ..database import DatabaseManager
 from ..scraper import MITDeadlineScraper

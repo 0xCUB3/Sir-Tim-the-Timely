@@ -14,6 +14,7 @@ import hikari
 import arc
 import miru
 from miru.ext import nav
+from hikari.errors import NotFoundError, BadRequestError
 
 from ..database import DatabaseManager
 from ..ai_handler import AIHandler
@@ -29,8 +30,21 @@ deadlines = plugin.include_slash_group("deadlines", "View and manage MIT deadlin
 def autodefer(func):
     @functools.wraps(func)
     async def wrapper(ctx, *args, **kwargs):
-        await ctx.defer()
-        return await func(ctx, *args, **kwargs)
+        try:
+            await ctx.defer()
+            return await func(ctx, *args, **kwargs)
+        except NotFoundError as e:
+            logger.error(f"Discord interaction not found in {func.__name__}: {e}")
+            return
+        except BadRequestError as e:
+            logger.error(f"Discord interaction already acknowledged in {func.__name__}: {e}")
+            return
+        except Exception as e:
+            logger.error(f"Error in {func.__name__}: {e}")
+            try:
+                await ctx.respond("Sorry, something went wrong with this command.")
+            except (NotFoundError, BadRequestError):
+                pass
     return wrapper
 
 @deadlines.include
@@ -64,11 +78,11 @@ async def next_deadlines(
     days: arc.Option[int, arc.IntParams("Number of days to look ahead")] = 7
 ) -> None:
     """Show deadlines coming up in the next X days."""
-    db_manager = ctx.client.get_type_dependency(DatabaseManager)
-    
-    await ctx.defer()
-    
     try:
+        await ctx.defer()
+        
+        db_manager = ctx.client.get_type_dependency(DatabaseManager)
+        
         deadlines = await db_manager.get_upcoming_deadlines(days)
         
         if not deadlines:
@@ -77,9 +91,18 @@ async def next_deadlines(
         
         await send_deadline_list(ctx, deadlines, title=f"Upcoming Deadlines (Next {days} Days)")
         
+    except NotFoundError as e:
+        logger.error(f"Discord interaction not found: {e}")
+        return
+    except BadRequestError as e:
+        logger.error(f"Discord interaction already acknowledged: {e}")
+        return
     except Exception as e:
         logger.error(f"Error fetching upcoming deadlines: {e}")
-        await ctx.respond("Sorry, something went wrong while retrieving upcoming deadlines.")
+        try:
+            await ctx.respond("Sorry, something went wrong while retrieving upcoming deadlines.")
+        except (NotFoundError, BadRequestError):
+            pass
 
 @deadlines.include
 @arc.slash_subcommand("search", "Search for deadlines")
@@ -88,11 +111,12 @@ async def search_deadlines(
     query: arc.Option[str, arc.StrParams("Search query for deadlines")]
 ) -> None:
     """Search for deadlines using natural language."""
-    db_manager = ctx.client.get_type_dependency(DatabaseManager)
-    
-    await ctx.defer()
-    
     try:
+        # Defer immediately to prevent timeout
+        await ctx.defer()
+        
+        db_manager = ctx.client.get_type_dependency(DatabaseManager)
+        
         # Check if AI handler is available
         ai_handler = ctx.client.get_type_dependency(AIHandler, default=None)
         
@@ -121,9 +145,21 @@ async def search_deadlines(
             
             await send_deadline_list(ctx, results, title=f"Search Results for '{query}'")
             
+    except NotFoundError as e:
+        logger.error(f"Discord interaction not found: {e}")
+        # Interaction expired, can't respond
+        return
+    except BadRequestError as e:
+        logger.error(f"Discord interaction already acknowledged: {e}")
+        # Interaction already handled, can't respond again
+        return
     except Exception as e:
         logger.error(f"Error searching deadlines: {e}")
-        await ctx.respond("Sorry, something went wrong while searching for deadlines.")
+        try:
+            await ctx.respond("Sorry, something went wrong while searching for deadlines.")
+        except (NotFoundError, BadRequestError):
+            # Can't respond to expired/acknowledged interaction
+            pass
 
 @deadlines.include
 @arc.slash_subcommand("remind", "Set a personal reminder for a deadline")
