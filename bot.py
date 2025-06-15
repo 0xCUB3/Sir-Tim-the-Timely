@@ -81,17 +81,18 @@ class SirTimBot:
             await self.db_manager.initialize()
             logger.info("Database initialized successfully")
             
-            # Initialize scraper
-            mit_url = os.getenv("MIT_DEADLINES_URL", "https://firstyear.mit.edu/orientation/countdown-to-campus-before-you-arrive/critical-summer-actions-and-deadlines/")
-            self.scraper = MITDeadlineScraper(mit_url, self.db_manager)
-            logger.info("MIT deadline scraper initialized")
-            
-            # Initialize AI handler if API key available
+            # Initialize AI handler first if API key available
             if self.gemini_api_key:
                 self.ai_handler = AIHandler(self.gemini_api_key, self.db_manager)
                 logger.info("AI handler initialized with Gemini API")
             else:
+                self.ai_handler = None
                 logger.warning("AI handler disabled - no API key provided")
+            
+            # Initialize scraper with AI handler
+            mit_url = os.getenv("MIT_DEADLINES_URL", "https://firstyear.mit.edu/orientation/countdown-to-campus-before-you-arrive/critical-summer-actions-and-deadlines/")
+            self.scraper = MITDeadlineScraper(mit_url, self.db_manager, self.ai_handler)
+            logger.info("MIT deadline scraper initialized")
             
             # Initialize reminder system
             self.reminder_system = ReminderSystem(self.bot, self.db_manager)
@@ -99,6 +100,8 @@ class SirTimBot:
             
             # Set up dependency injection
             self.client.set_type_dependency(DatabaseManager, self.db_manager)
+            self.client.set_type_dependency(MITDeadlineScraper, self.scraper)
+            self.client.set_type_dependency(ReminderSystem, self.reminder_system)
             self.client.set_type_dependency(miru.Client, self.miru_client)
             if self.ai_handler:
                 self.client.set_type_dependency(AIHandler, self.ai_handler)
@@ -152,13 +155,7 @@ class SirTimBot:
         if self.reminder_system:
             asyncio.create_task(self.reminder_system.start_reminder_loop())
         
-        # Perform initial deadline scraping
-        if self.scraper:
-            try:
-                await self.scraper.scrape_deadlines()
-                logger.info("Initial deadline scraping completed")
-            except Exception as e:
-                logger.error(f"Initial scraping failed: {e}")
+        logger.info("Background tasks started - periodic scraping will begin automatically")
     
     async def on_stopping(self, event: hikari.StoppingEvent) -> None:
         """Bot stopping handler."""

@@ -288,3 +288,55 @@ class DatabaseManager:
             rows = await cursor.fetchall()
             columns = [description[0] for description in cursor.description]
             return [dict(zip(columns, row)) for row in rows]
+    
+    async def find_duplicate_deadlines(self) -> List[Dict[str, Any]]:
+        """Find potential duplicate deadlines based on similar titles and categories."""
+        async with self._connection.cursor() as cursor:
+            # Find deadlines with similar titles (after basic normalization)
+            await cursor.execute("""
+                SELECT d1.id as id1, d1.title as title1, d1.due_date as due_date1, d1.category as category1,
+                       d2.id as id2, d2.title as title2, d2.due_date as due_date2, d2.category as category2
+                FROM deadlines d1
+                JOIN deadlines d2 ON d1.id < d2.id
+                WHERE d1.category = d2.category
+                AND (
+                    -- Exact title match
+                    d1.title = d2.title
+                    OR
+                    -- Similar titles (basic check)
+                    (LENGTH(d1.title) > 10 AND LENGTH(d2.title) > 10 AND
+                     SUBSTR(d1.title, 1, LENGTH(d1.title)/2) = SUBSTR(d2.title, 1, LENGTH(d2.title)/2))
+                )
+                ORDER BY d1.category, d1.title
+            """)
+            
+            rows = await cursor.fetchall()
+            columns = [description[0] for description in cursor.description]
+            return [dict(zip(columns, row)) for row in rows]
+    
+    async def cleanup_old_deadlines(self, days_old: int = 30) -> int:
+        """Remove deadlines that are older than the specified number of days."""
+        async with self._connection.cursor() as cursor:
+            await cursor.execute("""
+                DELETE FROM deadlines 
+                WHERE due_date < datetime('now', '-{} days')
+            """.format(days_old))
+            
+            await self._connection.commit()
+            return cursor.rowcount
+    
+    async def merge_deadlines(self, keep_id: int, remove_id: int) -> bool:
+        """Merge two deadlines by keeping one and removing the other."""
+        async with self._connection.cursor() as cursor:
+            # Check that both deadlines exist
+            await cursor.execute("SELECT id FROM deadlines WHERE id IN (?, ?)", (keep_id, remove_id))
+            existing = await cursor.fetchall()
+            
+            if len(existing) != 2:
+                return False
+            
+            # Remove the duplicate deadline
+            await cursor.execute("DELETE FROM deadlines WHERE id = ?", (remove_id,))
+            await self._connection.commit()
+            
+            return cursor.rowcount > 0

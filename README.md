@@ -6,6 +6,7 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 
 ### 📅 Deadline Management
 - **Automatic Deadline Scraping**: Periodically fetches and updates deadlines from MIT's official First Year website
+- **AI-Enhanced Title Generation**: Uses Gemini 2.0 Flash Lite with efficient batch processing to create ultra-concise, action-oriented deadline titles
 - **Smart Deadline Parsing**: Extracts dates, descriptions, and links from the MIT deadlines page
 - **Deadline Categories**: Organizes deadlines by type (Medical, Academic, Housing, Financial, etc.)
 - **Time Zone Support**: All deadlines displayed in EDT/EST with user timezone conversion
@@ -20,11 +21,12 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 - **Personalized Reminders**: Users can set custom reminders for specific deadlines
 - **Smart Filtering**: Only reminds about relevant deadlines (e.g., no FPOP reminders if not applicable)
 
-### 🤖 AI-Powered Natural Language Interface
+### 🤖 AI-Powered Natural Language Interface (Gemini 2.0 Flash Lite)
 - **Natural Language Queries**: Ask questions like "When is the housing application due?" or "What do I need to do before July?"
 - **Deadline Discovery**: "What deadlines are coming up this week?"
 - **Contextual Help**: AI understands MIT-specific terminology and provides relevant guidance
 - **Smart Summarization**: Get concise summaries of complex deadline requirements
+- **Ultra-Concise Title Enhancement**: Batch processes all deadline titles in a single API call for maximum efficiency
 
 ### 💬 Interactive Commands
 
@@ -41,6 +43,14 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 - `/status` - Show bot status and last data update
 - `/feedback <message>` - Send feedback to bot developers
 
+#### Admin Commands (Server Administrators Only)
+- `/admin scrape` - Manually trigger deadline scraping from MIT website
+- `/admin cleanup` - Clean up old deadlines and find potential duplicates
+- `/admin mergedeadlines <keep_id> <remove_id>` - Merge duplicate deadlines
+- `/admin adddeadline` - Add a custom deadline to the database
+- `/admin reminderchannel` - Set the current channel for daily reminders
+- `/admin status` - Show detailed bot status and statistics
+
 ### 📊 Dashboard & Analytics
 - **Progress Tracking**: Visual progress bars for multi-step deadlines
 - **Statistics**: Server-wide deadline statistics (anonymized)
@@ -55,6 +65,8 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 
 ### 🔧 Administrative Features
 - **Deadline Override**: Admins can manually add/edit deadline information
+- **Smart Duplicate Detection**: Automatically identifies and prevents recurring deadline duplicates
+- **Database Cleanup**: Remove old deadlines and merge duplicates with admin commands
 - **Announcement System**: Broadcast important updates to all servers
 - **Usage Analytics**: Track which deadlines are most queried
 - **Error Monitoring**: Automatic alerts when website scraping fails
@@ -62,7 +74,7 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 ## 🛠 Technical Stack
 
 - **Bot Framework**: Hikari (2.3.3+) with Hikari-Arc command handler
-- **AI Integration**: Google AI Studio API (Gemini 1.5 Flash)
+- **AI Integration**: Google AI Studio API (Gemini 2.0 Flash Lite)
 - **Database**: SQLite with async support (aiosqlite)
 - **Web Scraping**: aiohttp + BeautifulSoup4 for MIT website parsing
 - **Task Scheduling**: Built-in Hikari-Arc loops for periodic tasks
@@ -119,7 +131,8 @@ python main.py
 
 - **Primary**: https://firstyear.mit.edu/orientation/countdown-to-campus-before-you-arrive/critical-summer-actions-and-deadlines/
 - **Backup**: Manual deadline entry system
-- **Updates**: Automatic checks every 6 hours with change detection
+- **Updates**: Automatic checks every 6 hours with intelligent duplicate prevention
+- **Enhancement**: AI-powered batch title optimization creating 50-character action-oriented phrases (single API call per scrape)
 
 ## 📈 Roadmap
 

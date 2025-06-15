@@ -32,7 +32,7 @@ class AIHandler:
         
         # Configure Gemini API
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        self.model = genai.GenerativeModel('gemini-2.0-flash-lite')
         
         # System prompt for deadline queries
         self.system_prompt = """
@@ -58,7 +58,7 @@ Current date context: {current_date}
 Available deadline categories: Medical, Academic, Housing, Financial, Orientation, Administrative, Registration, General
 """
         
-        logger.info("AI Handler initialized with Gemini 1.5 Flash")
+        logger.info("AI Handler initialized with Gemini 2.0 Flash Lite")
     
     async def process_natural_query(self, query: str, user_context: Optional[Dict] = None) -> str:
         """Process a natural language query about deadlines."""
@@ -175,6 +175,97 @@ Be specific, actionable, and supportive.
         except Exception as e:
             logger.error(f"Error suggesting priorities for user {user_id}: {e}")
             return "I'm having trouble analyzing your deadlines right now. Try using the `/deadlines next` command to see what's coming up."
+    async def enhance_deadline_titles_batch(self, deadline_data_list: list) -> dict:
+        """Enhance multiple deadline titles in a single API call for efficiency."""
+        if not deadline_data_list:
+            return {}
+        
+        try:
+            # Build batch prompt with all titles
+            titles_section = []
+            for i, data in enumerate(deadline_data_list, 1):
+                title = data.get('title', '')
+                description = data.get('description', '')[:100]
+                category = data.get('category', 'General')
+                titles_section.append(f"{i}. Original: \"{title}\"\n   Category: {category}\n   Context: {description}")
+            
+            prompt = f"""
+Transform these MIT deadline titles into the shortest, clearest action phrases possible.
+
+RULES:
+- Maximum 50 characters each
+- Start with action verb: Submit, Complete, Register, Pay, Add, Update, Upload, Send, Provide, Schedule
+- Remove ALL dates/times (shown separately)
+- Remove filler words: by, due, required, deadline, must, should, need to
+- Use essential keywords only
+- Make each instantly understandable
+
+Examples by Category:
+Medical: "Medical Forms Required by July 30" → "Complete Medical Forms"
+Academic: "Transcript Submission Deadline August 1" → "Submit Transcripts"
+Housing: "Housing Application Due June 15" → "Submit Housing Application"
+Financial: "Tuition Payment Due August 15" → "Pay Tuition"
+Orientation: "FPOP Registration Opens May 15" → "Register for FPOP"
+Administrative: "Emergency Contact Information Due" → "Add Emergency Contacts"
+Registration: "Course Registration Begins July 1" → "Register for Classes"
+
+TITLES TO ENHANCE:
+{chr(10).join(titles_section)}
+
+Return ONLY the enhanced titles in this exact format:
+1. Enhanced Title Here
+2. Enhanced Title Here
+3. Enhanced Title Here
+(etc.)"""
+
+            response = await self._generate_response(prompt)
+            
+            # Parse the response back into individual titles
+            enhanced_titles = {}
+            lines = response.strip().split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if line and '. ' in line:
+                    try:
+                        # Extract number and title
+                        parts = line.split('. ', 1)
+                        if len(parts) == 2:
+                            index = int(parts[0]) - 1  # Convert to 0-based index
+                            enhanced_title = parts[1].strip().strip('"').strip("'")
+                            
+                            # Validate title length and content
+                            if enhanced_title and len(enhanced_title) <= 60 and 0 <= index < len(deadline_data_list):
+                                original_title = deadline_data_list[index].get('title', '')
+                                if original_title:  # Ensure original title exists
+                                    enhanced_titles[original_title] = enhanced_title
+                                    logger.debug(f"Enhanced title {index+1}: '{original_title}' -> '{enhanced_title}'")
+                    except (ValueError, IndexError) as e:
+                        logger.debug(f"Failed to parse line: {line} - {e}")
+                        continue
+            
+            # If we got fewer results than expected, log a warning
+            if len(enhanced_titles) < len(deadline_data_list) * 0.5:  # Less than 50% success rate
+                logger.warning(f"Low success rate in batch enhancement: {len(enhanced_titles)}/{len(deadline_data_list)} titles enhanced")
+            
+            logger.info(f"Batch enhanced {len(enhanced_titles)} out of {len(deadline_data_list)} titles")
+            return enhanced_titles
+            
+        except Exception as e:
+            logger.error(f"Failed to enhance titles in batch: {e}")
+            return {}
+
+    async def enhance_deadline_title(self, original_title: str, description: str = "", category: str = "General") -> str:
+        """Single title enhancement - fallback for individual calls."""
+        # For single titles, create a batch of one
+        batch_result = await self.enhance_deadline_titles_batch([{
+            'title': original_title,
+            'description': description,
+            'category': category
+        }])
+        
+        return batch_result.get(original_title, original_title)
+
     async def parse_deadline_text(self, text: str, base_url: str, current_year: int) -> Optional[Dict[str, Any]]:
         """Use LLM to parse a raw deadline/event text into structured data."""
         try:
@@ -308,12 +399,12 @@ URL: {deadline.get('url', 'No URL available')}
             test_response = self.model.generate_content("Hello")
             return {
                 'status': 'healthy',
-                'model': 'gemini-1.5-flash',
+                'model': 'gemini-2.0-flash-lite',
                 'test_successful': bool(test_response.text)
             }
         except Exception as e:
             return {
                 'status': 'unhealthy',
-                'model': 'gemini-1.5-flash',
+                'model': 'gemini-2.0-flash-lite',
                 'error': str(e)
             }

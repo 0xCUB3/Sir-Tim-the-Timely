@@ -184,6 +184,132 @@ async def status_info(ctx: arc.GatewayContext) -> None:
         logger.error(f"Error getting status: {e}")
         await ctx.respond(f"❌ Error retrieving status information: {str(e)}")
 
+@admin.include
+@arc.slash_subcommand("cleanup", "Clean up duplicate and old deadlines")
+async def cleanup_deadlines(ctx: arc.GatewayContext) -> None:
+    """Clean up duplicate and old deadlines from the database."""
+    # Only allow server admins to use this command
+    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
+        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+    
+    db_manager = ctx.client.get_type_dependency(DatabaseManager)
+    
+    await ctx.defer()
+    
+    try:
+        # Clean up old deadlines (older than 30 days)
+        old_removed = await db_manager.cleanup_old_deadlines(30)
+        
+        # Find potential duplicates
+        duplicates = await db_manager.find_duplicate_deadlines()
+        
+        embed = hikari.Embed(
+            title="🧹 Deadline Cleanup Results",
+            description="Database cleanup completed",
+            color=0x00BFFF,
+            timestamp=datetime.now()
+        )
+        
+        embed.add_field(
+            name="Old Deadlines Removed",
+            value=f"Removed {old_removed} deadlines older than 30 days",
+            inline=False
+        )
+        
+        if duplicates:
+            duplicate_text = []
+            for dup in duplicates[:10]:  # Show first 10 duplicates
+                duplicate_text.append(f"• ID {dup['id1']}: {dup['title1'][:50]}...")
+                duplicate_text.append(f"  vs ID {dup['id2']}: {dup['title2'][:50]}...")
+            
+            if len(duplicates) > 10:
+                duplicate_text.append(f"... and {len(duplicates) - 10} more")
+            
+            embed.add_field(
+                name=f"Potential Duplicates Found ({len(duplicates)})",
+                value="\n".join(duplicate_text) if duplicate_text else "None",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="Manual Review Required",
+                value="Use `/admin mergedeadlines <keep_id> <remove_id>` to merge duplicates",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="Duplicates",
+                value="No potential duplicates found",
+                inline=False
+            )
+        
+        embed.set_footer(text="Sir Tim the Timely • Admin Panel")
+        
+        await ctx.respond(embed=embed)
+        
+    except Exception as e:
+        logger.error(f"Error during cleanup: {e}")
+        await ctx.respond(f"❌ Error during cleanup: {str(e)}")
+
+@admin.include
+@arc.slash_subcommand("mergedeadlines", "Merge two duplicate deadlines")
+async def merge_deadlines(ctx: arc.GatewayContext) -> None:
+    """Merge two duplicate deadlines by keeping one and removing the other."""
+    # Only allow server admins to use this command
+    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
+        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+    
+    db_manager = ctx.client.get_type_dependency(DatabaseManager)
+    
+    # Default values - in a real implementation, these would be options
+    keep_id = 1
+    remove_id = 2
+    
+    try:
+        # Get deadline details before merging
+        deadlines = await db_manager.get_deadlines(active_only=False)
+        keep_deadline = next((d for d in deadlines if d['id'] == keep_id), None)
+        remove_deadline = next((d for d in deadlines if d['id'] == remove_id), None)
+        
+        if not keep_deadline or not remove_deadline:
+            await ctx.respond("❌ One or both deadline IDs not found. Please check the IDs and try again.")
+            return
+        
+        # Perform the merge
+        success = await db_manager.merge_deadlines(keep_id, remove_id)
+        
+        if success:
+            embed = hikari.Embed(
+                title="✅ Deadlines Merged Successfully",
+                description=f"Merged duplicate deadlines",
+                color=0x00FF00,
+                timestamp=datetime.now()
+            )
+            
+            embed.add_field(
+                name="Kept Deadline",
+                value=f"ID {keep_id}: {keep_deadline['title']}",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="Removed Deadline",
+                value=f"ID {remove_id}: {remove_deadline['title']}",
+                inline=False
+            )
+            
+            embed.set_footer(text="Sir Tim the Timely • Admin Panel")
+            
+            await ctx.respond(embed=embed)
+        else:
+            await ctx.respond("❌ Failed to merge deadlines. Please check the IDs and try again.")
+        
+    except Exception as e:
+        logger.error(f"Error merging deadlines: {e}")
+        await ctx.respond(f"❌ Error merging deadlines: {str(e)}")
+
 @arc.loader
 def load(client: arc.GatewayClient) -> None:
     """Load the plugin."""

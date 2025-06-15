@@ -7,6 +7,7 @@ Implements commands for managing and viewing deadlines.
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
+import functools
 
 import hikari
 import arc
@@ -24,13 +25,19 @@ plugin = arc.GatewayPlugin("deadlines")
 # Define deadline command group
 deadlines = plugin.include_slash_group("deadlines", "View and manage MIT deadlines")
 
+def autodefer(func):
+    @functools.wraps(func)
+    async def wrapper(ctx, *args, **kwargs):
+        await ctx.defer()
+        return await func(ctx, *args, **kwargs)
+    return wrapper
+
 @deadlines.include
 @arc.slash_subcommand("list", "List all deadlines or filter by category/month")
+@autodefer
 async def list_deadlines(ctx: arc.GatewayContext) -> None:
     """List all deadlines or filter by category/month."""
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
-    
-    await ctx.defer()
     
     try:
         # Get all active deadlines
