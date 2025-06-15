@@ -57,22 +57,8 @@ class MITDeadlineScraper:
             'Registration': ['registration', 'sign up', 'application']
         }
     
-    async def start_periodic_scraping(self):
-        """Start the periodic scraping task."""
-        logger.info("Starting periodic scraping - first scrape will begin immediately")
-        while True:
-            try:
-                await self.scrape_deadlines()
-                logger.info(f"Sleeping for {self.scrape_interval_hours} hours until next scrape")
-                await asyncio.sleep(self.scrape_interval_hours * 3600)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Error in periodic scraping: {e}")
-                await asyncio.sleep(3600)  # Wait 1 hour before retrying
-    
     async def scrape_deadlines(self) -> List[Dict]:
-        """Scrape deadlines from the MIT website."""
+        """Scrape deadlines from the MIT website and fully overwrite the database, deduplicating by normalized title and category (keep latest due date)."""
         if not self.session:
             self.session = aiohttp.ClientSession()
         try:
@@ -91,7 +77,6 @@ class MITDeadlineScraper:
                     try:
                         logger.info(f"Enhancing {len(deadlines)} deadline titles with AI...")
                         enhanced_titles = await self.ai_handler.enhance_deadline_titles_batch(deadlines)
-                        # Apply enhanced titles back to deadlines
                         for deadline in deadlines:
                             original_title = deadline['raw_title']
                             if original_title in enhanced_titles:
@@ -106,9 +91,20 @@ class MITDeadlineScraper:
                 else:
                     for deadline in deadlines:
                         deadline['title'] = deadline['raw_title']
-                await self._update_database(deadlines)
-                logger.info(f"Successfully scraped {len(deadlines)} deadlines")
-                return deadlines
+                # Deduplicate: keep only the latest due_date for each (normalized raw_title, category)
+                deduped = {}
+                for deadline in deadlines:
+                    norm_title = self._normalize_deadline_title(deadline['raw_title'])
+                    category = deadline.get('category', 'General')
+                    key = (norm_title, category)
+                    due = deadline['due_date']
+                    if key not in deduped or due > deduped[key]['due_date']:
+                        deduped[key] = deadline
+                unique_deadlines = list(deduped.values())
+                # Overwrite the deadlines table
+                await self._overwrite_deadlines(unique_deadlines)
+                logger.info(f"Successfully scraped and overwrote {len(unique_deadlines)} unique deadlines")
+                return unique_deadlines
         except Exception as e:
             logger.error(f"Failed to scrape deadlines: {e}")
             raise
@@ -315,19 +311,29 @@ class MITDeadlineScraper:
         return None
     
     def _normalize_deadline_title(self, title: str) -> str:
-        """Normalize deadline title by removing date-specific information."""
+        """Normalize deadline title by removing date-specific information, months, parentheticals, and common deadline words."""
         import re
-        
-        # Remove common date patterns from titles
+        # Remove parentheticals (e.g., (June), (July 1), etc.)
+        title = re.sub(r'\([^)]*\)', '', title)
+        # Remove month names (full and abbreviated)
+        months = [
+            'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
+            'september', 'october', 'november', 'december',
+            'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
+        ]
+        for month in months:
+            title = re.sub(rf'\b{month}\b', '', title, flags=re.IGNORECASE)
+        # Remove common date patterns
         title = re.sub(r'\b\w+\s+\d+\b', '', title)  # Remove "June 15", "July 1", etc.
         title = re.sub(r'\b\d+\s*[-–]\s*\d+\b', '', title)  # Remove "15-20", "1-5", etc.
         title = re.sub(r'\b\d{4}\b', '', title)  # Remove years like "2024", "2025"
-        title = re.sub(r'\b(by|due|before|after)\s+\w+\s+\d+\b', '', title, flags=re.IGNORECASE)
-        
+        title = re.sub(r'\b(by|due|before|after|on|until|through|from|to)\s+\w+\s+\d+\b', '', title, flags=re.IGNORECASE)
+        # Remove common deadline words
+        for word in ['deadline', 'due', 'required', 'must', 'should', 'need to', 'last day', 'final day', 'final deadline']:
+            title = re.sub(rf'\b{word}\b', '', title, flags=re.IGNORECASE)
         # Remove extra whitespace and normalize
         title = ' '.join(title.split())
         title = title.strip(' ,-–')
-        
         return title.lower()
     
     def _is_similar_description(self, desc1: str, desc2: str) -> bool:
@@ -364,43 +370,26 @@ class MITDeadlineScraper:
         similarity = intersection / union if union > 0 else 0
         return similarity >= 0.8
     
-    async def _update_database(self, deadlines: List[Dict]):
-        """Update database with scraped deadlines, handling recurring deadlines intelligently."""
-        updated_count = 0
-        added_count = 0
-        skipped_count = 0
+    async def _overwrite_deadlines(self, deadlines: List[Dict]):
+        """Delete all existing deadlines and insert the new ones."""
+        async with self.db_manager._connection.cursor() as cursor:
+            await cursor.execute("DELETE FROM deadlines")
+            await self.db_manager._connection.commit()
         for deadline_data in deadlines:
             try:
-                # Check for recurring deadline patterns first
-                recurring_match = await self._find_recurring_deadline(deadline_data)
-                if recurring_match:
-                    deadline_id = recurring_match['id']
-                    existing_due = datetime.fromisoformat(recurring_match['due_date'].replace('Z', '+00:00'))
-                    new_due = deadline_data['due_date']
-                    if new_due > existing_due:
-                        await self.db_manager.update_deadline(deadline_id, **deadline_data)
-                        updated_count += 1
-                        logger.info(f"Updated recurring deadline: {deadline_data['title']}")
-                    else:
-                        skipped_count += 1
-                        logger.debug(f"Skipped recurring deadline (not newer): {deadline_data['title']}")
-                else:
-                    # Add new deadline with both raw_title and title
-                    await self.db_manager.add_deadline(
-                        raw_title=deadline_data['raw_title'],
-                        title=deadline_data['title'],
-                        description=deadline_data.get('description'),
-                        start_date=deadline_data.get('start_date'),
-                        due_date=deadline_data['due_date'],
-                        category=deadline_data.get('category'),
-                        url=deadline_data.get('url'),
-                        is_critical=deadline_data.get('is_critical', False),
-                        is_event=deadline_data.get('is_event', False)
-                    )
-                    added_count += 1
+                await self.db_manager.add_deadline(
+                    raw_title=deadline_data['raw_title'],
+                    title=deadline_data['title'],
+                    description=deadline_data.get('description'),
+                    start_date=deadline_data.get('start_date'),
+                    due_date=deadline_data['due_date'],
+                    category=deadline_data.get('category'),
+                    url=deadline_data.get('url'),
+                    is_critical=deadline_data.get('is_critical', False),
+                    is_event=deadline_data.get('is_event', False)
+                )
             except Exception as e:
-                logger.error(f"Failed to update deadline {deadline_data.get('title', 'Unknown')}: {e}")
-        logger.info(f"Database updated: {added_count} added, {updated_count} updated, {skipped_count} skipped (recurring)")
+                logger.error(f"Failed to insert deadline {deadline_data.get('title', 'Unknown')}: {e}")
     
     async def close(self):
         """Close the HTTP session."""

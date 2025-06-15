@@ -139,7 +139,6 @@ class SirTimBot:
     async def on_started(self, event: hikari.StartedEvent) -> None:
         """Bot started handler."""
         logger.info("Sir Tim the Timely has started successfully!")
-        
         # Set bot presence to show as online with an activity
         await self.bot.update_presence(
             status=hikari.Status.ONLINE,
@@ -148,14 +147,13 @@ class SirTimBot:
                 type=hikari.ActivityType.WATCHING
             )
         )
-        
-        # Start background tasks
+        # Scrape deadlines once at startup
         if self.scraper:
-            asyncio.create_task(self.scraper.start_periodic_scraping())
+            await self.scraper.scrape_deadlines()
+        # Start reminder system as a background task if needed
         if self.reminder_system:
             asyncio.create_task(self.reminder_system.start_reminder_loop())
-        
-        logger.info("Background tasks started - periodic scraping will begin automatically")
+        logger.info("Background tasks started - deadlines scraped and reminders scheduled")
     
     async def on_stopping(self, event: hikari.StoppingEvent) -> None:
         """Bot stopping handler."""
