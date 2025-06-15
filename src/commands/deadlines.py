@@ -212,7 +212,7 @@ async def deadline_help(ctx: arc.GatewayContext) -> None:
     await ctx.respond(embed=embed)
 
 async def send_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict], title: str) -> None:
-    """Format and send a list of deadlines as interactive embeds with pagination buttons, using AI-enhanced titles and nice markdown formatting for descriptions. Distinguish between deadlines, start dates, and durations, and parse end dates from descriptions if needed. Always use the latest date found for the display."""
+    """Format and send a list of deadlines as interactive embeds with pagination buttons, using the stored AI-enhanced titles from the database. Do not re-enhance titles at display time."""
     sorted_deadlines = sorted(deadlines, key=lambda x: x['due_date'])
     total = len(sorted_deadlines)
     if total == 0:
@@ -228,11 +228,8 @@ async def send_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict], tit
 
     per_page = 8
     pages = []
-    ai_handler = ctx.client.get_type_dependency(AIHandler, default=None)
 
-    # Helper to extract all dates from description
     def extract_all_dates_from_desc(desc):
-        # Look for all date-like patterns
         patterns = [
             r"([A-Za-z]+ \d{1,2},? \d{4})",
         ]
@@ -253,11 +250,6 @@ async def send_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict], tit
         page_num = (i // per_page) + 1
         total_pages = (total + per_page - 1) // per_page
 
-        if ai_handler:
-            enhanced_titles = await ai_handler.enhance_deadline_titles_batch(page_deadlines)
-        else:
-            enhanced_titles = {d['title']: d['title'] for d in page_deadlines}
-
         lines = []
         for dl in page_deadlines:
             start_date_raw = dl.get('start_date')
@@ -275,19 +267,15 @@ async def send_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict], tit
                 except Exception:
                     due_date = None
             desc = dl.get('description', '').strip()
-            # Extract all dates from description
             desc_dates = extract_all_dates_from_desc(desc)
-            # Find the latest date among all available
             all_dates = [d for d in [start_date, due_date] if d]
             all_dates.extend(desc_dates)
             latest_date = max(all_dates) if all_dates else None
-            # If we have a start and a latest date, and they are different, treat as range
             if start_date and latest_date and start_date.date() != latest_date.date():
                 type_emoji = "📅"
                 type_label = "Active"
                 date_str = f"{start_date.strftime('%b %d')}–{latest_date.strftime('%b %d, %Y')}"
             elif due_date and latest_date and due_date != latest_date:
-                # If due_date is actually the start and latest_date is after, swap
                 type_emoji = "📅"
                 type_label = "Active"
                 date_str = f"{due_date.strftime('%b %d')}–{latest_date.strftime('%b %d, %Y')}"
@@ -305,7 +293,7 @@ async def send_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict], tit
                 date_str = "Unknown"
 
             marker = "🚨 " if dl.get('is_critical') else ""
-            title_str = enhanced_titles.get(dl['title'], dl['title'])
+            title_str = dl.get('title', 'Untitled')
             category = dl.get('category', 'General')
             if desc:
                 if len(desc) > 120:

@@ -46,6 +46,7 @@ class DatabaseManager:
             await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS deadlines (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    raw_title TEXT,
                     title TEXT NOT NULL,
                     description TEXT,
                     start_date DATETIME,
@@ -94,37 +95,37 @@ class DatabaseManager:
         async with self._connection.execute("PRAGMA table_info(deadlines)") as cursor:
             rows = await cursor.fetchall()
         existing = {row[1] for row in rows}
-        # Add missing columns
         async with self._connection.cursor() as cursor:
+            if 'raw_title' not in existing:
+                await cursor.execute("ALTER TABLE deadlines ADD COLUMN raw_title TEXT")
+                # Backfill raw_title for existing rows
+                await cursor.execute("UPDATE deadlines SET raw_title = title WHERE raw_title IS NULL OR raw_title = ''")
             if 'start_date' not in existing:
                 await cursor.execute("ALTER TABLE deadlines ADD COLUMN start_date DATETIME")
             if 'is_event' not in existing:
                 await cursor.execute("ALTER TABLE deadlines ADD COLUMN is_event BOOLEAN DEFAULT 0")
             await self._connection.commit()
     
-    async def add_deadline(self, title: str, description: str, due_date: datetime,
+    async def add_deadline(self, raw_title: str, title: str, description: str, due_date: datetime,
                           start_date: Optional[datetime] = None,
                           category: Optional[str] = None, url: Optional[str] = None,
                           is_critical: bool = False, is_event: bool = False) -> int:
         """Add a new deadline to the database, avoiding duplicates."""
         async with self._connection.cursor() as cursor:
-            # Check for exact duplicates first
+            # Check for exact duplicates using raw_title
             await cursor.execute("""
                 SELECT id FROM deadlines 
-                WHERE title = ? AND due_date = ? AND category = ?
-            """, (title, due_date, category))
-            
+                WHERE raw_title = ? AND due_date = ? AND category = ?
+            """, (raw_title, due_date, category))
             existing = await cursor.fetchone()
             if existing:
-                logger.info(f"Duplicate deadline found: {title} - {due_date}")
+                logger.info(f"Duplicate deadline found: {raw_title} - {due_date}")
                 return existing[0]
-            
-            # Insert new deadline using INSERT OR IGNORE for extra safety
+            # Insert new deadline
             await cursor.execute("""
-                INSERT INTO deadlines (title, description, start_date, due_date, category, url, is_critical, is_event)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (title, description, start_date, due_date, category, url, is_critical, is_event))
-            
+                INSERT INTO deadlines (raw_title, title, description, start_date, due_date, category, url, is_critical, is_event)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (raw_title, title, description, start_date, due_date, category, url, is_critical, is_event))
             await self._connection.commit()
             return cursor.lastrowid or 0
     
