@@ -6,7 +6,7 @@ Implements commands for managing and viewing deadlines.
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Optional
+from typing import List, Dict
 import functools
 import re
 
@@ -34,15 +34,18 @@ def autodefer(func):
     return wrapper
 
 @deadlines.include
-@arc.slash_subcommand("list", "List all deadlines or filter by category/month")
+@arc.slash_subcommand("list", "List all deadlines or filter by category")
 @autodefer
-async def list_deadlines(ctx: arc.GatewayContext) -> None:
-    """List all deadlines or filter by category/month."""
+async def list_deadlines(
+    ctx: arc.GatewayContext,
+    category: arc.Option[str | None, arc.StrParams("Filter by category (optional)")] = None
+) -> None:
+    """List all deadlines or filter by category."""
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
     
     try:
         # Get all active deadlines
-        all_deadlines = await db_manager.get_deadlines(category=None)
+        all_deadlines = await db_manager.get_deadlines(category=category)
         
         if not all_deadlines:
             await ctx.respond("No deadlines found.")
@@ -56,10 +59,12 @@ async def list_deadlines(ctx: arc.GatewayContext) -> None:
 
 @deadlines.include
 @arc.slash_subcommand("next", "Show deadlines in the next X days")
-async def next_deadlines(ctx: arc.GatewayContext) -> None:
+async def next_deadlines(
+    ctx: arc.GatewayContext,
+    days: arc.Option[int, arc.IntParams("Number of days to look ahead")] = 7
+) -> None:
     """Show deadlines coming up in the next X days."""
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
-    days = 7  # Default value
     
     await ctx.defer()
     
@@ -78,10 +83,12 @@ async def next_deadlines(ctx: arc.GatewayContext) -> None:
 
 @deadlines.include
 @arc.slash_subcommand("search", "Search for deadlines")
-async def search_deadlines(ctx: arc.GatewayContext) -> None:
+async def search_deadlines(
+    ctx: arc.GatewayContext,
+    query: arc.Option[str, arc.StrParams("Search query for deadlines")]
+) -> None:
     """Search for deadlines using natural language."""
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
-    query = "upcoming"  # Default query
     
     await ctx.defer()
     
@@ -120,11 +127,13 @@ async def search_deadlines(ctx: arc.GatewayContext) -> None:
 
 @deadlines.include
 @arc.slash_subcommand("remind", "Set a personal reminder for a deadline")
-async def set_reminder(ctx: arc.GatewayContext) -> None:
+async def set_reminder(
+    ctx: arc.GatewayContext,
+    deadline_id: arc.Option[int, arc.IntParams("ID of the deadline to set a reminder for")],
+    hours: arc.Option[int, arc.IntParams("Hours before deadline to be reminded")] = 24
+) -> None:
     """Set a personal reminder for a deadline."""
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
-    deadline_id = 1  # Default ID
-    hours = 24  # Default hours
     
     try:
         # Check if deadline exists

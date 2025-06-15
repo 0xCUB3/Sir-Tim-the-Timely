@@ -6,7 +6,6 @@ Implements admin commands for managing the bot and its settings.
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 import hikari
 import arc
@@ -61,6 +60,10 @@ async def set_reminder_channel(ctx: arc.GatewayContext) -> None:
     reminder_system = ctx.client.get_type_dependency(ReminderSystem)
     
     try:
+        if ctx.guild_id is None:
+            await ctx.respond("This command can only be used in a server.")
+            return
+            
         await reminder_system.set_reminder_channel(ctx.guild_id, ctx.channel_id)
         
         await ctx.respond("✅ This channel has been set as the reminder channel.")
@@ -71,7 +74,14 @@ async def set_reminder_channel(ctx: arc.GatewayContext) -> None:
 
 @admin.include
 @arc.slash_subcommand("adddeadline", "Add a custom deadline")
-async def add_deadline(ctx: arc.GatewayContext) -> None:
+async def add_deadline(
+    ctx: arc.GatewayContext,
+    title: arc.Option[str, arc.StrParams("Title of the deadline")],
+    description: arc.Option[str, arc.StrParams("Description of the deadline")],
+    due_date: arc.Option[str, arc.StrParams("Due date (YYYY-MM-DD HH:MM format)")],
+    category: arc.Option[str, arc.StrParams("Category for the deadline")] = "General",
+    is_critical: arc.Option[bool, arc.BoolParams("Is this a critical deadline?")] = False
+) -> None:
     """Add a custom deadline to the database."""
     # Only allow server admins to use this command
     if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
@@ -80,19 +90,21 @@ async def add_deadline(ctx: arc.GatewayContext) -> None:
     
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
     
-    # Default values - in a real implementation, these would be options
-    title = "Test Deadline"
-    description = "This is a test deadline"
-    due_date = datetime.now()
-    category = "General"
-    is_critical = False
-    
     try:
+        # Parse the due date
+        from datetime import datetime
+        try:
+            parsed_due_date = datetime.strptime(due_date, "%Y-%m-%d %H:%M")
+        except ValueError:
+            await ctx.respond("❌ Invalid date format. Please use YYYY-MM-DD HH:MM format (e.g., 2024-12-25 23:59)")
+            return
+        
         # Add the deadline
         deadline_id = await db_manager.add_deadline(
+            raw_title=title,
             title=title,
             description=description,
-            due_date=due_date,
+            due_date=parsed_due_date,
             category=category,
             is_critical=is_critical
         )
@@ -283,7 +295,7 @@ async def merge_deadlines(ctx: arc.GatewayContext) -> None:
         if success:
             embed = hikari.Embed(
                 title="✅ Deadlines Merged Successfully",
-                description=f"Merged duplicate deadlines",
+                description="Merged duplicate deadlines",
                 color=0x00FF00,
                 timestamp=datetime.now()
             )
