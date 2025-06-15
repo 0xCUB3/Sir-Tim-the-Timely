@@ -5,7 +5,7 @@ Implements commands for managing and viewing deadlines.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import functools
 
@@ -96,7 +96,7 @@ async def search_deadlines(ctx: arc.GatewayContext) -> None:
                 title="🔍 Deadline Search Results",
                 description=response,
                 color=0x4285F4,
-                timestamp=datetime.now()
+                timestamp=datetime.now(timezone.utc)
             )
             
             embed.set_footer(text="Sir Tim the Timely • AI-powered search")
@@ -142,7 +142,7 @@ async def set_reminder(ctx: arc.GatewayContext) -> None:
             title="🔔 Reminder Set",
             description=f"You'll be reminded about **{deadline['title']}** {hours} hour(s) before the deadline.",
             color=0x00BFFF,
-            timestamp=datetime.now()
+            timestamp=datetime.now(timezone.utc)
         )
         
         embed.add_field(name="Due Date", value=due_date.strftime("%B %d, %Y at %I:%M %p"), inline=True)
@@ -164,7 +164,7 @@ async def deadline_help(ctx: arc.GatewayContext) -> None:
         title="📚 Sir Tim the Timely - Deadline Help",
         description="Here's how to use the deadline commands effectively:",
         color=0x9B59B6,
-        timestamp=datetime.now()
+        timestamp=datetime.now(timezone.utc)
     )
     
     embed.add_field(
@@ -211,73 +211,76 @@ async def deadline_help(ctx: arc.GatewayContext) -> None:
     await ctx.respond(embed=embed)
 
 async def send_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict], title: str) -> None:
-    """Format and send a list of deadlines as interactive embeds with pagination buttons."""
-    # Sort by due date
+    """Format and send a list of deadlines as interactive embeds with pagination buttons, using AI-enhanced titles and nice markdown formatting for descriptions."""
     sorted_deadlines = sorted(deadlines, key=lambda x: x['due_date'])
     total = len(sorted_deadlines)
-    
     if total == 0:
         embed = hikari.Embed(
             title=f"📅 {title}",
             description="No deadlines found.",
             color=0x4285F4,
-            timestamp=datetime.now()
+            timestamp=datetime.now(timezone.utc)
         )
         embed.set_footer(text="Sir Tim the Timely • MIT Deadline Bot")
         await ctx.respond(embed=embed)
         return
-    
-    # Pagination settings
+
     per_page = 8
     pages = []
-    
-    # Create pages
+    ai_handler = ctx.client.get_type_dependency(AIHandler, default=None)
+
     for i in range(0, total, per_page):
         page_deadlines = sorted_deadlines[i:i+per_page]
         page_num = (i // per_page) + 1
         total_pages = (total + per_page - 1) // per_page
-        
-        embed = hikari.Embed(
-            title=f"📅 {title}",
-            description=f"Page {page_num}/{total_pages} • Showing {i+1}-{min(i+per_page, total)} of {total} deadlines",
-            color=0x4285F4,
-            timestamp=datetime.now()
-        )
-        
+
+        # AI-enhance titles in batch if possible
+        if ai_handler:
+            enhanced_titles = await ai_handler.enhance_deadline_titles_batch(page_deadlines)
+        else:
+            enhanced_titles = {d['title']: d['title'] for d in page_deadlines}
+
+        # Build a beautiful markdown description for each deadline
         lines = []
         for dl in page_deadlines:
             due = datetime.fromisoformat(dl['due_date'].replace('Z', '+00:00'))
-            day = due.strftime("%b %d")
+            day = due.strftime("%b %d, %Y")
             marker = "🚨 " if dl.get('is_critical') else ""
-            text = f"{marker}[ID:{dl['id']}] {dl['title']} - {day}"
-            if dl.get('category'):
-                text += f" `{dl['category']}`"
-            lines.append(text)
-        
-        embed.add_field(
-            name="Deadlines",
-            value="\n".join(lines),
-            inline=False
+            title_str = enhanced_titles.get(dl['title'], dl['title'])
+            category = dl.get('category', 'General')
+            desc = dl.get('description', '').strip()
+            if desc:
+                # Italicize if long
+                if len(desc) > 120:
+                    desc = f"*{desc}*"
+                else:
+                    desc = f"{desc}"
+            else:
+                desc = "_No description available._"
+            # Format each deadline as a markdown block
+            lines.append(
+                f"{marker}**{title_str}**  `#{dl['id']}`\n"
+                f"> **Due:** {day}   |   **Category:** `{category}`\n"
+                f"> {desc}"
+            )
+        # Join with double newlines for clarity
+        page_desc = "\n\n".join(lines)
+        embed = hikari.Embed(
+            title=f"📅 {title}",
+            description=f"Page {page_num}/{total_pages} • Showing {i+1}-{min(i+per_page, total)} of {total} deadlines\n\n{page_desc}",
+            color=0x4285F4,
+            timestamp=datetime.now(timezone.utc)
         )
-        
-        embed.set_footer(text="Sir Tim the Timely • MIT Deadline Bot")
+        embed.set_footer(text="Sir Tim the Timely • MIT Deadline Bot • AI-Enhanced")
         pages.append(embed)
-    
+
     if len(pages) == 1:
-        # Single page, no need for navigation
         await ctx.respond(embed=pages[0])
     else:
-        # Multiple pages, use interactive navigation
-        # Get the miru client from the context
         miru_client = ctx.client.get_type_dependency(miru.Client)
-        
-        # Create custom button set with simple navigation - First, Previous, Indicator, Next, Last, Stop
         buttons = [nav.FirstButton(), nav.PrevButton(), nav.IndicatorButton(), nav.NextButton(), nav.LastButton(), nav.StopButton()]
-        
-        navigator = nav.NavigatorView(pages=pages, items=buttons, timeout=300)  # 5 minute timeout
+        navigator = nav.NavigatorView(pages=pages, items=buttons, timeout=300)
         builder = await navigator.build_response_async(miru_client)
-        
-        # Arc's respond_with_builder handles deferred interactions automatically
         await ctx.respond_with_builder(builder)
         miru_client.start_view(navigator)
 
