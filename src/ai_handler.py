@@ -190,24 +190,27 @@ Be specific, actionable, and supportive.
                 titles_section.append(f"{i}. Original: \"{title}\"\n   Category: {category}\n   Context: {description}")
             
             prompt = f"""
-Transform these MIT deadline titles into the shortest, clearest action phrases possible.
+Transform these MIT deadline titles into the shortest, most specific, and informative action phrases possible.
 
 RULES:
 - Maximum 50 characters each
-- Start with action verb: Submit, Complete, Register, Pay, Add, Update, Upload, Send, Provide, Schedule
+- Start with an action verb: Submit, Complete, Register, Pay, Add, Update, Upload, Send, Provide, Schedule, etc.
+- Use MIT-specific acronyms, jargon, and unique terms (e.g., FPOP, FEE, WebSIS, TechCASH, HASS, AP, ASE, etc.) wherever appropriate.
+- Be as specific as possible about what the student must do, referencing MIT systems, forms, or programs by their real names.
+- Avoid generic or vague titles. Do not use "form" or "application" unless it is the official MIT term.
 - Remove ALL dates/times (shown separately)
 - Remove filler words: by, due, required, deadline, must, should, need to
 - Use essential keywords only
-- Make each instantly understandable
+- Make each instantly understandable to an MIT first-year
 
 Examples by Category:
-Medical: "Medical Forms Required by July 30" → "Complete Medical Forms"
-Academic: "Transcript Submission Deadline August 1" → "Submit Transcripts"
-Housing: "Housing Application Due June 15" → "Submit Housing Application"
-Financial: "Tuition Payment Due August 15" → "Pay Tuition"
-Orientation: "FPOP Registration Opens May 15" → "Register for FPOP"
-Administrative: "Emergency Contact Information Due" → "Add Emergency Contacts"
-Registration: "Course Registration Begins July 1" → "Register for Classes"
+Medical: "Medical Forms Required by July 30" → "Submit MIT Medical Forms"
+Academic: "Transcript Submission Deadline August 1" → "Send Final High School Transcript"
+Housing: "Housing Application Due June 15" → "Register for MIT Housing Lottery"
+Financial: "Tuition Payment Due August 15" → "Pay Fall Term Tuition in WebSIS"
+Orientation: "FPOP Registration Opens May 15" → "Register for FPOP Program"
+Administrative: "Emergency Contact Information Due" → "Update Emergency Contacts in WebSIS"
+Registration: "Course Registration Begins July 1" → "Register for Fall Classes in WebSIS"
 
 TITLES TO ENHANCE:
 {chr(10).join(titles_section)}
