@@ -262,12 +262,43 @@ class MITDeadlineScraper:
         if len(title) > 100:
             title = title[:97] + "..."
         
+        # Clean up and format emails in title
+        title = self._format_emails_in_text(title)
+        
         # Create description from remaining sentences
         description = ". ".join(other_sentences)
         if len(description) > 500:
             description = description[:497] + "..."
         
+        # Clean up and format emails in description
+        description = self._format_emails_in_text(description)
+        
         return title or "MIT Deadline", description
+    
+    def _format_emails_in_text(self, text: str) -> str:
+        """Format emails in text by wrapping them in backticks and fixing spacing."""
+        if not text:
+            return text
+        
+        # Enhanced email regex pattern - handles various spacing issues
+        # Matches: username@domain.com, user name @ domain .com, etc.
+        email_pattern = r'\b[A-Za-z0-9._%+-]+\s*@\s*[A-Za-z0-9.-]+(?:\s*\.\s*[A-Za-z0-9-]+)*\s*\.\s*[A-Z|a-z]{2,}\b'
+        
+        def format_email(match):
+            email = match.group(0)
+            # Remove all spaces around @ symbol
+            email = re.sub(r'\s*@\s*', '@', email)
+            # Remove spaces before and after dots in domain
+            email = re.sub(r'\s*\.\s*', '.', email)
+            # Remove any remaining extra spaces
+            email = re.sub(r'\s+', '', email)
+            # Wrap in backticks
+            return f'`{email}`'
+        
+        # Replace emails with formatted versions
+        formatted_text = re.sub(email_pattern, format_email, text)
+        
+        return formatted_text
     
     def _categorize_deadline(self, text: str) -> str:
         """Categorize deadline based on keywords."""

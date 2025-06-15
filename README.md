@@ -7,7 +7,7 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 ### 📅 Deadline Management
 - **Automatic Deadline Scraping**: Periodically fetches and updates deadlines from MIT's official First Year website
 - **AI-Enhanced Title Generation**: Uses Gemini 2.0 Flash Lite with efficient batch processing to create ultra-concise, action-oriented deadline titles
-- **Smart Deadline Parsing**: Extracts dates, descriptions, and links from the MIT deadlines page
+- **Smart Deadline Parsing**: Extracts dates, descriptions, and links from the MIT deadlines page with automatic email formatting
 - **Deadline Categories**: Organizes deadlines by type (Medical, Academic, Housing, Financial, etc.)
 - **Time Zone Support**: All deadlines displayed in EDT/EST with user timezone conversion
 
@@ -67,6 +67,7 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 - **Deadline Override**: Admins can manually add/edit deadline information
 - **Smart Duplicate Detection**: Automatically identifies and prevents recurring deadline duplicates
 - **Database Cleanup**: Remove old deadlines and merge duplicates with admin commands
+- **Email Formatting**: Automatically formats email addresses in descriptions with backticks and fixes spacing
 - **Announcement System**: Broadcast important updates to all servers
 - **Usage Analytics**: Track which deadlines are most queried
 - **Error Monitoring**: Automatic alerts when website scraping fails
