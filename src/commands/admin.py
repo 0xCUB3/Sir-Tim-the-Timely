@@ -80,7 +80,16 @@ async def add_deadline(
     title: arc.Option[str, arc.StrParams("Title of the deadline")],
     description: arc.Option[str, arc.StrParams("Description of the deadline")],
     due_date: arc.Option[str, arc.StrParams("Due date (YYYY-MM-DD HH:MM format)")],
-    category: arc.Option[str, arc.StrParams("Category for the deadline")] = "General",
+    category: arc.Option[str, arc.StrParams("Category for the deadline", choices={
+        "General": "General",
+        "Medical": "Medical", 
+        "Academic": "Academic",
+        "Housing": "Housing",
+        "Financial": "Financial",
+        "Orientation": "Orientation",
+        "Administrative": "Administrative",
+        "Registration": "Registration"
+    })] = "General",
     is_critical: arc.Option[bool, arc.BoolParams("Is this a critical deadline?")] = False
 ) -> None:
     """Add a custom deadline to the database."""

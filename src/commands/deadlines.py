@@ -52,14 +52,27 @@ def autodefer(func):
 @autodefer
 async def list_deadlines(
     ctx: arc.GatewayContext,
-    category: arc.Option[str | None, arc.StrParams("Filter by category (optional)")] = None
+    category: arc.Option[str, arc.StrParams("Filter by category (optional)", choices={
+        "All Categories": "all",
+        "General": "General",
+        "Medical": "Medical", 
+        "Academic": "Academic",
+        "Housing": "Housing",
+        "Financial": "Financial",
+        "Orientation": "Orientation",
+        "Administrative": "Administrative",
+        "Registration": "Registration"
+    })] = "all"
 ) -> None:
     """List all deadlines or filter by category."""
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
     
     try:
+        # Convert "all" to None for the database query
+        category_filter = None if category == "all" else category
+        
         # Get all active deadlines
-        all_deadlines = await db_manager.get_deadlines(category=category)
+        all_deadlines = await db_manager.get_deadlines(category=category_filter)
         
         if not all_deadlines:
             await ctx.respond("No deadlines found.")
