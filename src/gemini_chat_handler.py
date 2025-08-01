@@ -86,7 +86,7 @@ class GeminiChatHandler:
             system_instruction=PERSONALITY_PROMPT
         )
         self.generation_config = genai.GenerationConfig(
-            max_output_tokens=500,
+                max_output_tokens=250,
             temperature=1.1, # Creative
             top_p=0.95,
         )
