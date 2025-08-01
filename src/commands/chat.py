@@ -1,14 +1,27 @@
 """
-Chat Commands for Sir Tim the Timely
-
-Commands for managing Tim's chat functionality in channels.
+Chat Commands for Sir Tim the Tim        embed = hikari.Embed(
+            title="✅ Chat Channel Set",
+            description="Tim will now randomly respond in this channel with snarky but helpful wisdom.",
+            color=0x00FF00
+        )
+        
+        embed.add_field(
+            name="How it works",
+            value=(
+                "• Tim responds randomly (~25% chance)\n"
+                "• Higher chance if mentioned or deadline keywords used\n"
+                "• Has a 5-second cooldown to prevent spam\n"
+                "• Snarky but secretly helpful and wise"
+            ),
+            inline=False
+        )r managing Tim's chat functionality in channels.
 """
 
 import logging
 import hikari
 import arc
 
-from src.gemini_chat_handler import GeminiChatHandler
+from src.hf_handler import HuggingFaceHandler
 
 logger = logging.getLogger("sir_tim.commands.chat")
 
@@ -30,24 +43,24 @@ async def set_chat_channel(ctx: arc.GatewayContext) -> None:
         return
     
     try:
-        chat_handler = ctx.client.get_type_dependency(GeminiChatHandler)
+        llm_handler = ctx.client.get_type_dependency(HuggingFaceHandler)
         
         # Set the current channel as the chat channel
-        await chat_handler.set_chat_channel(ctx.guild_id, ctx.channel_id)
+        await llm_handler.set_chat_channel(ctx.guild_id, ctx.channel_id)
         
         embed = hikari.Embed(
             title="✅ Chat Channel Set",
-            description=f"Tim will now randomly respond in this channel with unfiltered snark and profanity.",
+            description="Tim will now randomly respond in this channel with friendly and helpful wisdom.",
             color=0x00FF00
         )
         
         embed.add_field(
             name="How it works",
             value=(
-                "• Tim responds randomly (~65% chance)\n"
-                "• Higher chance if mentioned or deadline keywords used\n"
+                "• Tim responds randomly (~70% chance)\n"
+                "• Higher chance if mentioned or when asking questions\n"
                 "• Has a short cooldown to prevent spam\n"
-                "• Very unhinged, crude, and profane"
+                "• Friendly, wise, and genuinely helpful"
             ),
             inline=False
         )
@@ -56,8 +69,8 @@ async def set_chat_channel(ctx: arc.GatewayContext) -> None:
             name="Tips",
             value=(
                 "• Mention Tim to get his attention\n"
-                "• Talk about deadlines, stress, or MIT stuff\n"
-                "• He's extremely rude but secretly helpful\n"
+                "• Ask about deadlines, stress, or MIT stuff\n"
+                "• He's friendly and offers practical advice\n"
                 "• Use `/removechat` to disable"
             ),
             inline=False
@@ -84,10 +97,10 @@ async def remove_chat_channel(ctx: arc.GatewayContext) -> None:
         return
     
     try:
-        chat_handler = ctx.client.get_type_dependency(GeminiChatHandler)
+        llm_handler = ctx.client.get_type_dependency(HuggingFaceHandler)
         
         # Remove the chat channel
-        await chat_handler.remove_chat_channel(ctx.guild_id)
+        await llm_handler.remove_chat_channel(ctx.guild_id)
         
         embed = hikari.Embed(
             title="🔇 Chat Disabled",
@@ -122,11 +135,11 @@ async def chat_status(ctx: arc.GatewayContext) -> None:
         return
     
     try:
-        chat_handler = ctx.client.get_type_dependency(GeminiChatHandler)
-        status = chat_handler.get_status()
+        llm_handler = ctx.client.get_type_dependency(HuggingFaceHandler)
+        status = llm_handler.get_status()
         
         # Check if this guild has chat enabled
-        chat_channel_id = chat_handler.chat_channels.get(ctx.guild_id)
+        chat_channel_id = llm_handler.chat_channels.get(ctx.guild_id)
         
         embed = hikari.Embed(
             title="💬 Tim's Chat Status",
@@ -159,7 +172,7 @@ async def chat_status(ctx: arc.GatewayContext) -> None:
         embed.add_field(
             name="Settings",
             value=(
-                f"• Model: `{status['model']}`\n"
+                f"• Model: `{status.get('model', 'tinyllama')}`\n"
                 f"• Base response chance: {status['base_response_chance']*100:.0f}%\n"
                 f"• Cooldown: {status['cooldown_seconds']} seconds\n"
                 f"• Total active servers: {status['active_channels']}"
