@@ -19,6 +19,7 @@ from src.database import DatabaseManager
 from src.scraper import MITDeadlineScraper
 from src.ai_handler import AIHandler
 from src.reminder_system import ReminderSystem
+from src.gemini_chat_handler import GeminiChatHandler
 
 # Load environment variables
 load_dotenv()
@@ -68,6 +69,7 @@ class SirTimBot:
         self.scraper = None
         self.ai_handler = None
         self.reminder_system = None
+        self.chat_handler = None
         
     async def setup_components(self):
         """Initialize all bot components."""
@@ -98,6 +100,14 @@ class SirTimBot:
             self.reminder_system = ReminderSystem(self.bot, self.db_manager)
             logger.info("Reminder system initialized")
             
+            # Initialize the chat handler for chat responses
+            if self.gemini_api_key:
+                self.chat_handler = GeminiChatHandler(api_key=self.gemini_api_key, db_manager=self.db_manager)
+                logger.info("Gemini chat handler initialized")
+            else:
+                self.chat_handler = None
+                logger.warning("Gemini chat handler is disabled, no GEMINI_API_KEY provided.")
+            
             # Set up dependency injection
             self.client.set_type_dependency(DatabaseManager, self.db_manager)
             self.client.set_type_dependency(MITDeadlineScraper, self.scraper)
@@ -105,6 +115,8 @@ class SirTimBot:
             self.client.set_type_dependency(miru.Client, self.miru_client)
             if self.ai_handler:
                 self.client.set_type_dependency(AIHandler, self.ai_handler)
+            if self.chat_handler:
+                self.client.set_type_dependency(GeminiChatHandler, self.chat_handler)
             
         except Exception as e:
             logger.error(f"Failed to initialize components: {e}")
@@ -114,11 +126,24 @@ class SirTimBot:
         """Load all command extensions."""
         try:
             # Load command modules
-            extensions = [
-                "src.commands.deadlines",
-                "src.commands.admin",
-                "src.commands.utils"
-            ]
+            # Check if simplified interface is enabled
+            use_simplified = os.getenv("USE_SIMPLIFIED_INTERFACE", "true").lower() == "true"
+            
+            if use_simplified:
+                extensions = [
+                    "src.commands.simplified_interface",
+                    "src.commands.admin",  # Keep admin commands
+                    "src.commands.chat",   # Chat functionality
+                ]
+                logger.info("Loading simplified user interface")
+            else:
+                extensions = [
+                    "src.commands.deadlines",
+                    "src.commands.admin", 
+                    "src.commands.utils",
+                    "src.commands.chat",   # Chat functionality
+                ]
+                logger.info("Loading traditional command interface")
             
             for extension in extensions:
                 try:
@@ -160,6 +185,12 @@ class SirTimBot:
         logger.info("Sir Tim the Timely is shutting down...")
         if self.db_manager:
             await self.db_manager.close()
+            
+    async def on_message(self, event: hikari.GuildMessageCreateEvent) -> None:
+        """Handle incoming guild messages."""
+        # Process message with the chat handler for chat features
+        if self.chat_handler:
+            await self.chat_handler.handle_message(event)
     
     # Note: This method is no longer used; the setup is done directly in main()
     async def load_and_start(self):
@@ -189,6 +220,7 @@ def main():
         sir_tim.bot.event_manager.subscribe(hikari.StartingEvent, sir_tim.on_starting)
         sir_tim.bot.event_manager.subscribe(hikari.StartedEvent, sir_tim.on_started)
         sir_tim.bot.event_manager.subscribe(hikari.StoppingEvent, sir_tim.on_stopping)
+        sir_tim.bot.event_manager.subscribe(hikari.GuildMessageCreateEvent, sir_tim.on_message)
         
         # Load extensions before running (need to use asyncio.run for this async operation)
         asyncio.run(sir_tim.load_extensions())

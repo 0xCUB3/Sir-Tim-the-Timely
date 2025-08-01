@@ -30,18 +30,24 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 
 ### 💬 Interactive Commands
 
-#### Slash Commands
+<!-- Chat functionality has been removed -->
+
+#### Simplified Interface (Default)
+- `/tim [query]` - Main command for all deadline interactions
+  - No query: Shows upcoming deadlines
+  - With query: Natural language search (e.g., "housing deadlines", "what's due this week?")
+- `/urgent` - Show urgent deadlines (next 3 days)
+- `/setup` - One-click setup with smart defaults
+
+#### Traditional Interface (Optional)
+Set `USE_SIMPLIFIED_INTERFACE=false` in `.env` to use detailed commands:
 - `/deadlines list [category] [month]` - List all or filtered deadlines
 - `/deadlines search <query>` - Search deadlines with natural language
 - `/deadlines next [days]` - Show deadlines in the next X days (default: 7)
 - `/deadlines remind <deadline_id> <time>` - Set personal reminder
 - `/deadlines help` - Show detailed help and FAQ
-
-#### Utility Commands
 - `/timezone set <timezone>` - Set your timezone for accurate deadline times
 - `/preferences` - Manage notification preferences
-- `/status` - Show bot status and last data update
-- `/feedback <message>` - Send feedback to bot developers
 
 #### Admin Commands (Server Administrators Only)
 - `/admin scrape` - Manually trigger deadline scraping from MIT website
@@ -75,7 +81,8 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 ## 🛠 Technical Stack
 
 - **Bot Framework**: Hikari (2.3.3+) with Hikari-Arc command handler
-- **AI Integration**: Google AI Studio API (Gemini 2.0 Flash Lite)
+- **AI Integration**: 
+  - Google AI Studio API (Gemini 2.0 Flash Lite) for deadline enhancements and natural language processing
 - **Database**: SQLite with async support (aiosqlite)
 - **Web Scraping**: aiohttp + BeautifulSoup4 for MIT website parsing
 - **Task Scheduling**: Built-in Hikari-Arc loops for periodic tasks
@@ -110,6 +117,8 @@ cp .env.example .env
 # Edit .env with your tokens:
 # TOKEN=your_discord_bot_token
 # GEMINI_API_KEY=your_google_ai_studio_api_key
+# HUGGINGFACE_API_TOKEN=your_huggingface_api_token
+# USE_SIMPLIFIED_INTERFACE=true  # Recommended for most users
 ```
 
 3. **Database Setup**
@@ -117,7 +126,14 @@ cp .env.example .env
 python setup_database.py
 ```
 
-4. **Run the Bot**
+4. **Install Ollama & the Phi-2 Model**
+First, install Ollama by following the instructions at https://ollama.com/download
+Then run:
+```bash
+python install_model.py
+```
+
+5. **Run the Bot**
 ```bash
 python main.py
 ```

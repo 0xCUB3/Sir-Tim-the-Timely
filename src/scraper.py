@@ -8,6 +8,7 @@ import logging
 import re
 import asyncio
 import os
+import hashlib
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Union
 from urllib.parse import urljoin
@@ -58,7 +59,7 @@ class MITDeadlineScraper:
         }
     
     async def scrape_deadlines(self) -> List[Dict]:
-        """Scrape deadlines from the MIT website and fully overwrite the database, deduplicating by normalized title and category (keep latest due date)."""
+        """Scrape deadlines from the MIT website and intelligently update only changed content."""
         if not self.session:
             self.session = aiohttp.ClientSession()
         try:
@@ -68,32 +69,69 @@ class MITDeadlineScraper:
                     raise Exception(f"HTTP {response.status}: Failed to fetch deadline page")
                 html = await response.text()
                 soup = BeautifulSoup(html, 'html.parser')
-                deadlines = await self._parse_deadlines(soup)
-                # Always keep the original title as 'raw_title'
-                for deadline in deadlines:
+                new_deadlines = await self._parse_deadlines(soup)
+                
+                # Get existing deadlines from database
+                existing_deadlines = await self.db_manager.get_deadlines(active_only=False)
+                existing_by_hash = {d.get('content_hash'): d for d in existing_deadlines if d.get('content_hash')}
+                
+                # Process new deadlines and determine what needs AI enhancement
+                processed_deadlines = []
+                need_ai_enhancement = []
+                
+                for deadline in new_deadlines:
+                    # Set raw_title and generate content hash
                     deadline['raw_title'] = deadline['title']
-                # Enhance all titles in a single batch API call if AI handler is available
-                if self.ai_handler and deadlines:
+                    content_hash = self._generate_content_hash(deadline)
+                    deadline['content_hash'] = content_hash
+                    
+                    # Check if we have this exact content already
+                    if content_hash in existing_by_hash:
+                        existing = existing_by_hash[content_hash]
+                        # Use existing AI-enhanced title if available
+                        if existing.get('ai_enhanced'):
+                            deadline['title'] = existing['title']
+                            deadline['ai_enhanced'] = True
+                            logger.debug(f"Reusing AI-enhanced title for: {deadline['raw_title']}")
+                        else:
+                            deadline['title'] = deadline['raw_title']
+                            deadline['ai_enhanced'] = False
+                    else:
+                        # New or changed content - needs AI enhancement
+                        deadline['title'] = deadline['raw_title']
+                        deadline['ai_enhanced'] = False
+                        need_ai_enhancement.append(deadline)
+                    
+                    processed_deadlines.append(deadline)
+                
+                # Enhance only new/changed titles with AI
+                if self.ai_handler and need_ai_enhancement:
                     try:
-                        logger.info(f"Enhancing {len(deadlines)} deadline titles with AI...")
-                        enhanced_titles = await self.ai_handler.enhance_deadline_titles_batch(deadlines)
-                        for deadline in deadlines:
+                        logger.info(f"Enhancing {len(need_ai_enhancement)} new/changed deadline titles with AI...")
+                        enhanced_titles = await self.ai_handler.enhance_deadline_titles_batch(need_ai_enhancement)
+                        
+                        for deadline in need_ai_enhancement:
                             original_title = deadline['raw_title']
                             if original_title in enhanced_titles:
                                 deadline['title'] = enhanced_titles[original_title]
+                                deadline['ai_enhanced'] = True
+                                logger.debug(f"AI-enhanced: '{original_title}' -> '{deadline['title']}'")
                             else:
                                 deadline['title'] = original_title
-                        logger.info(f"Successfully enhanced {len(enhanced_titles)} titles")
+                                deadline['ai_enhanced'] = False
+                        
+                        logger.info(f"Successfully enhanced {len(enhanced_titles)} new titles")
                     except Exception as e:
                         logger.warning(f"Batch title enhancement failed, using original titles: {e}")
-                        for deadline in deadlines:
+                        for deadline in need_ai_enhancement:
                             deadline['title'] = deadline['raw_title']
+                            deadline['ai_enhanced'] = False
                 else:
-                    for deadline in deadlines:
-                        deadline['title'] = deadline['raw_title']
+                    logger.info("No new deadlines need AI enhancement")
+                
                 # Deduplicate: keep only the latest due_date for each (normalized raw_title, category)
                 deduped = {}
-                for deadline in deadlines:
+                for deadline in processed_deadlines:
                     norm_title = self._normalize_deadline_title(deadline['raw_title'])
                     category = deadline.get('category', 'General')
                     key = (norm_title, category)
@@ -101,9 +139,10 @@ class MITDeadlineScraper:
                     if key not in deduped or due > deduped[key]['due_date']:
                         deduped[key] = deadline
                 unique_deadlines = list(deduped.values())
-                # Overwrite the deadlines table
-                await self._overwrite_deadlines(unique_deadlines)
-                logger.info(f"Successfully scraped and overwrote {len(unique_deadlines)} unique deadlines")
+                
+                # Update the database
+                await self._update_deadlines(unique_deadlines)
+                logger.info(f"Successfully processed {len(unique_deadlines)} unique deadlines ({len(need_ai_enhancement)} enhanced with AI)")
                 return unique_deadlines
         except Exception as e:
             logger.error(f"Failed to scrape deadlines: {e}")
@@ -401,11 +440,19 @@ class MITDeadlineScraper:
         similarity = intersection / union if union > 0 else 0
         return similarity >= 0.8
     
-    async def _overwrite_deadlines(self, deadlines: List[Dict]):
-        """Delete all existing deadlines and insert the new ones."""
+    def _generate_content_hash(self, deadline: Dict) -> str:
+        """Generate a hash of the deadline content to detect changes."""
+        # Include key fields that would affect AI enhancement
+        content = f"{deadline['raw_title']}|{deadline.get('description', '')}|{deadline.get('category', '')}|{deadline.get('due_date', '')}"
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+    
+    async def _update_deadlines(self, deadlines: List[Dict]):
+        """Update the database with new deadlines, preserving AI enhancements where possible."""
+        # Clear existing deadlines and insert new ones
         async with self.db_manager._connection.cursor() as cursor:
             await cursor.execute("DELETE FROM deadlines")
             await self.db_manager._connection.commit()
+        
         for deadline_data in deadlines:
             try:
                 await self.db_manager.add_deadline(
@@ -417,7 +464,9 @@ class MITDeadlineScraper:
                     category=deadline_data.get('category'),
                     url=deadline_data.get('url'),
                     is_critical=deadline_data.get('is_critical', False),
-                    is_event=deadline_data.get('is_event', False)
+                    is_event=deadline_data.get('is_event', False),
+                    ai_enhanced=deadline_data.get('ai_enhanced', False),
+                    content_hash=deadline_data.get('content_hash')
                 )
             except Exception as e:
                 logger.error(f"Failed to insert deadline {deadline_data.get('title', 'Unknown')}: {e}")

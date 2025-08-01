@@ -66,6 +66,10 @@ Available deadline categories: Medical, Academic, Housing, Financial, Orientatio
             # Get relevant deadlines from database
             relevant_deadlines = await self._get_relevant_deadlines(query)
             
+            # If no relevant deadlines found, return a helpful message
+            if not relevant_deadlines:
+                return "No deadlines found matching your query. Try asking about specific categories like 'housing deadlines' or 'medical forms', or use `/tim` to see all upcoming deadlines."
+            
             # Build context for the AI
             context = await self._build_context(relevant_deadlines, user_context)
             
@@ -78,8 +82,8 @@ Available deadline categories: Medical, Academic, Housing, Financial, Orientatio
             return response
             
         except Exception as e:
-            logger.error(f"Error processing natural query: {e}")
-            return "I apologize, but I'm having trouble processing your request right now. Please try asking about specific deadlines or check the MIT first-year website directly."
+            logger.error(f"Error processing natural query '{query}': {e}")
+            return "No deadlines found matching your query. Try asking about specific categories like 'housing deadlines' or 'medical forms', or use `/tim` to see all upcoming deadlines."
     
     async def summarize_upcoming_deadlines(self, days: int = 7) -> str:
         """Generate a summary of upcoming deadlines."""
@@ -277,12 +281,21 @@ You are an assistant that extracts structured deadline and event data from raw t
 For the following text, return a JSON object with fields:
 - title (string)
 - description (string)
-- due_date (ISO format, end date for ranges)
-- start_date (ISO format or null)
-- is_event (boolean)
+- due_date (ISO format, this should be the FINAL deadline or end date of a range. If only one date is mentioned, it is the due_date.)
+- start_date (ISO format or null. This should be the beginning date of a range or event. If only one date is mentioned, this should be null.)
+- is_event (boolean. True if the item describes an event with a duration or a period, False if it's a single-point deadline.)
 - category (one of Medical, Academic, Housing, Financial, Orientation, Administrative, Registration, General)
 - is_critical (boolean)
 - url (string or null)
+
+RULES:
+- The `due_date` must always be the final date/time the action is required. If multiple dates are present, prioritize the one explicitly stated as "due", "deadline", or the latest possible date of a range/event.
+- If the text implies a range (e.g., "July 14-21" or "from July 14, due July 21"), `start_date` should be the earlier date and `due_date` the later.
+- If the text mentions an initial date for an action and a separate, later "due" date, the initial date is `start_date` and the "due" date is `due_date`.
+- If only one date is explicitly stated as a "due" date or a firm deadline, `start_date` should be null.
+- Set `is_event` to true for multi-day events or activities with a clear start and end, and false for one-time deadlines or submissions.
+- When extracting `due_date` or `start_date`, if a specific time is mentioned (e.g., "1:00 PM EDT"), incorporate it into the ISO format. If no time is specified, default to "23:59:59" for deadlines.
+
 Assume current year is {current_year}. Use base_url to complete relative URLs if any.
 Text: "{text}"
 Only output the JSON without any additional text.
@@ -297,22 +310,21 @@ Only output the JSON without any additional text.
     
     async def _get_relevant_deadlines(self, query: str) -> List[Dict]:
         """Get deadlines relevant to the query."""
-        # Simple keyword-based relevance for now
-        # Could be enhanced with semantic search later
-        
         query_lower = query.lower()
         
+        all_potential_deadlines = []
+
         # Check for specific categories
         for category in ['medical', 'academic', 'housing', 'financial', 'orientation']:
             if category in query_lower:
-                return await self.db_manager.get_deadlines(category=category.title())
+                all_potential_deadlines.extend(await self.db_manager.get_deadlines(category=category.title()))
         
         # Check for time-based queries
         if any(word in query_lower for word in ['this week', 'next week', 'soon', 'upcoming']):
-            return await self.db_manager.get_upcoming_deadlines(14)
+            all_potential_deadlines.extend(await self.db_manager.get_upcoming_deadlines(14))
         
         if any(word in query_lower for word in ['this month', 'month']):
-            return await self.db_manager.get_upcoming_deadlines(30)
+            all_potential_deadlines.extend(await self.db_manager.get_upcoming_deadlines(30))
         
         # Search for specific terms
         search_terms = []
@@ -323,14 +335,16 @@ Only output the JSON without any additional text.
                 search_terms.append(keyword)
         
         if search_terms:
-            all_results = []
             for term in search_terms:
-                results = await self.db_manager.search_deadlines(term)
-                all_results.extend(results)
-            return all_results
-        
-        # Default: return upcoming deadlines
-        return await self.db_manager.get_upcoming_deadlines(14)
+                all_potential_deadlines.extend(await self.db_manager.search_deadlines(term))
+
+        # If no specific criteria matched, default to upcoming deadlines
+        if not all_potential_deadlines:
+            all_potential_deadlines.extend(await self.db_manager.get_upcoming_deadlines(14))
+
+        # Now, apply AI-powered deduplication to the collected deadlines
+        deduplicated_deadlines = await self._deduplicate_deadlines_ai(all_potential_deadlines)
+        return deduplicated_deadlines
     
     async def _build_context(self, deadlines: List[Dict], user_context: Optional[Dict]) -> Dict:
         """Build context for the AI prompt."""
@@ -411,3 +425,109 @@ URL: {deadline.get('url', 'No URL available')}
                 'model': 'gemini-2.0-flash-lite',
                 'error': str(e)
             }
+
+    async def _deduplicate_deadlines_ai(self, deadlines: List[Dict]) -> List[Dict]:
+        """Uses AI to semantically deduplicate a list of deadlines."""
+        if not deadlines:
+            return []
+
+        try:
+            # Assign temporary IDs for tracking
+            indexed_deadlines = {f"DEADLINE_{i}": deadline for i, deadline in enumerate(deadlines)}
+            
+            # Format for prompt
+            formatted_for_prompt = []
+            for temp_id, dl in indexed_deadlines.items():
+                due_date_str = datetime.fromisoformat(dl['due_date'].replace('Z', '+00:00')).strftime("%B %d, %Y")
+                formatted_for_prompt.append(f"ID: {temp_id}\nTitle: {dl.get('title', 'N/A')}\nDescription: {dl.get('description', 'N/A')}\nDue Date: {due_date_str}\nCategory: {dl.get('category', 'General')}\nURL: {dl.get('url', 'N/A')}\n---")
+            
+            prompt = f"""
+You are an expert assistant for grouping semantically identical MIT first-year deadlines.
+You will be given a list of deadlines, each with a temporary ID, title, description, due date, category, and URL.
+
+Your task is to identify all semantically identical deadlines and group their temporary IDs.
+Consider deadlines semantically identical if they represent the same underlying requirement or action for an MIT first-year student, *even if* their titles, descriptions, due dates (if within a very close range, e.g., same day but different times), categories, or URLs have slight variations.
+Be *extremely* aggressive in identifying duplicates. For example:
+- "Submit Medical Forms" (ID: DEADLINE_0) and "Health Forms Submission" (ID: DEADLINE_1) or "Medical Form Upload" (ID: DEADLINE_5) should be considered the same.
+- "Housing Application" (ID: DEADLINE_2) and "Residential Life Registration" (ID: DEADLINE_3) or "On-Campus Housing Sign-up" (ID: DEADLINE_6) should be considered the same.
+- "Tuition Payment" (ID: DEADLINE_4) and "Fall Term Bill Due" (ID: DEADLINE_7) should be considered the same.
+
+DEADLINES:
+{chr(10).join(formatted_for_prompt)}
+
+Output a JSON array of arrays. Each inner array should contain the temporary IDs of deadlines that are semantically identical. If a deadline has no semantic duplicates, it should be in an inner array by itself.
+ONLY output the JSON. Do not include any other text or formatting.
+
+Example:
+[
+  ["DEADLINE_0", "DEADLINE_1", "DEADLINE_5"], 
+  ["DEADLINE_2", "DEADLINE_3", "DEADLINE_6"],
+  ["DEADLINE_4", "DEADLINE_7"],
+  ["DEADLINE_8"]
+]
+"""
+            
+            response_text = await self._generate_response(prompt)
+            import json
+            
+            # Attempt to parse the JSON response
+            try:
+                # Clean up the response text - remove markdown formatting if present
+                clean_response = response_text.strip()
+                if clean_response.startswith('```json'):
+                    clean_response = clean_response[7:]  # Remove ```json
+                if clean_response.endswith('```'):
+                    clean_response = clean_response[:-3]  # Remove ```
+                clean_response = clean_response.strip()
+                
+                ai_grouped_ids = json.loads(clean_response)
+                if not isinstance(ai_grouped_ids, list) or not all(isinstance(g, list) for g in ai_grouped_ids):
+                    raise ValueError("AI response is not a list of lists.")
+
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse AI deduplication response as expected JSON array of arrays: {response_text[:500]} - {e}")
+                # Fallback to current simple deduplication if AI response is unparseable or malformed
+                return list({(d.get('title'), d.get('due_date')): d for d in deadlines}.values())
+
+            # Select one representative from each group
+            final_unique_deadlines = []
+            processed_ids = set()
+            
+            for group in ai_grouped_ids:
+                # Prioritize a representative that actually exists in our indexed_deadlines
+                representative_id = None
+                for dl_id in group:
+                    if dl_id in indexed_deadlines:
+                        representative_id = dl_id
+                        break
+                
+                if representative_id and representative_id not in processed_ids:
+                    final_unique_deadlines.append(indexed_deadlines[representative_id])
+                    # Add all IDs in the group to processed_ids to avoid re-processing
+                    for dl_id in group:
+                        processed_ids.add(dl_id)
+                elif not representative_id:
+                    logger.warning(f"AI group {group} did not contain any known deadline IDs. Skipping group.")
+
+            # Ensure any deadlines not grouped by AI are still included (as single-item groups)
+            # This handles cases where AI might miss a deadline or not group it at all.
+            for temp_id, deadline_obj in indexed_deadlines.items():
+                if temp_id not in processed_ids:
+                    final_unique_deadlines.append(deadline_obj)
+                    processed_ids.add(temp_id)
+            
+            return final_unique_deadlines
+
+        except Exception as e:
+            logger.error(f"Error during AI-powered deduplication: {e}")
+            # Fallback to current simple deduplication in case of AI error
+            # Use a more robust deduplication that handles edge cases
+            seen = {}
+            unique_deadlines = []
+            for deadline in deadlines:
+                # Create a key based on title and due date
+                key = (deadline.get('title', '').lower().strip(), deadline.get('due_date', ''))
+                if key not in seen:
+                    seen[key] = True
+                    unique_deadlines.append(deadline)
+            return unique_deadlines

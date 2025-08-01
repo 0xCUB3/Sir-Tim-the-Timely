@@ -5,7 +5,8 @@ Implements admin commands for managing the bot and its settings.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+import pytz
 
 import hikari
 import arc
@@ -99,12 +100,16 @@ async def add_deadline(
         return
     
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
+    reminder_system = ctx.client.get_type_dependency(ReminderSystem)
     
     try:
         # Parse the due date
-        from datetime import datetime
         try:
-            parsed_due_date = datetime.strptime(due_date, "%Y-%m-%d %H:%M")
+            naive_due_date = datetime.strptime(due_date, "%Y-%m-%d %H:%M")
+            # Localize the naive datetime to the default timezone of the bot
+            local_due_date = reminder_system.default_timezone.localize(naive_due_date)
+            # Convert to UTC for storage
+            parsed_due_date = local_due_date.astimezone(timezone.utc)
         except ValueError:
             await ctx.respond("❌ Invalid date format. Please use YYYY-MM-DD HH:MM format (e.g., 2024-12-25 23:59)")
             return

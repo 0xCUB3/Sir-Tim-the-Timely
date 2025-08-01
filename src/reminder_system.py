@@ -7,7 +7,7 @@ Handles automated reminders and notifications for deadlines.
 import logging
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Set, Any
 import pytz
 
@@ -53,6 +53,7 @@ class ReminderSystem:
     
     async def _check_and_send_reminders(self):
         """Check for due reminders and send them."""
+        # Always use timezone-aware datetime
         now = datetime.now(self.default_timezone)
         
         # Check for daily reminders
@@ -153,7 +154,9 @@ class ReminderSystem:
                 if deadline.get('is_event'):
                     continue
                 due_date = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00'))
-                hours_until = (due_date - now).total_seconds() / 3600
+                # Convert due_date to the same timezone as now for comparison
+                due_date_local = due_date.astimezone(self.default_timezone)
+                hours_until = (due_date_local - now).total_seconds() / 3600
                 
                 # Check if we should send an urgent reminder
                 for threshold_hours in self.urgent_reminder_hours:
@@ -182,7 +185,7 @@ class ReminderSystem:
                 title="🚨 Urgent Deadline Alert!",
                 description=f"**{deadline['title']}** is due in {time_text}!",
                 color=0xFF4444 if hours <= 6 else 0xFF8800,
-                timestamp=datetime.now().astimezone()
+                timestamp=datetime.now(timezone.utc)
             )
             
             due_date = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00'))
@@ -231,7 +234,7 @@ class ReminderSystem:
             title="📅 Daily Deadline Reminder",
             description="Here's what's coming up for MIT Class of 2029:",
             color=0x4285F4,
-            timestamp=datetime.now().astimezone()
+            timestamp=datetime.now(timezone.utc)
         )
         
         if urgent:
@@ -320,7 +323,7 @@ class ReminderSystem:
                 title="🧪 Test Reminder",
                 description="This is a test of the Sir Tim reminder system!",
                 color=0x00FF00,
-                timestamp=datetime.now().astimezone()
+                timestamp=datetime.now(timezone.utc)
             )
             
             embed.add_field(

@@ -55,6 +55,8 @@ class DatabaseManager:
                     url TEXT,
                     is_critical BOOLEAN DEFAULT FALSE,
                     is_event BOOLEAN DEFAULT FALSE,
+                    ai_enhanced BOOLEAN DEFAULT FALSE,
+                    content_hash TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
@@ -80,6 +82,7 @@ class DatabaseManager:
                     reminder_channel_id INTEGER,
                     admin_role_id INTEGER,
                     announcement_enabled BOOLEAN DEFAULT TRUE,
+                    chat_channel_id INTEGER,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
@@ -90,26 +93,42 @@ class DatabaseManager:
         logger.info("Database tables created successfully")
     
     async def _migrate_schema(self):
-        """Ensure new columns exist in deadlines table for migrations."""
-        # Fetch existing columns
-        async with self._connection.execute("PRAGMA table_info(deadlines)") as cursor:
-            rows = await cursor.fetchall()
-        existing = {row[1] for row in rows}
+        """Ensure new columns exist in all tables for migrations."""
         async with self._connection.cursor() as cursor:
-            if 'raw_title' not in existing:
+            # --- Migrate deadlines table ---
+            await cursor.execute("PRAGMA table_info(deadlines)")
+            rows = await cursor.fetchall()
+            existing_deadlines = {row[1] for row in rows}
+
+            if 'raw_title' not in existing_deadlines:
                 await cursor.execute("ALTER TABLE deadlines ADD COLUMN raw_title TEXT")
-                # Backfill raw_title for existing rows
                 await cursor.execute("UPDATE deadlines SET raw_title = title WHERE raw_title IS NULL OR raw_title = ''")
-            if 'start_date' not in existing:
+            if 'start_date' not in existing_deadlines:
                 await cursor.execute("ALTER TABLE deadlines ADD COLUMN start_date DATETIME")
-            if 'is_event' not in existing:
+            if 'is_event' not in existing_deadlines:
                 await cursor.execute("ALTER TABLE deadlines ADD COLUMN is_event BOOLEAN DEFAULT 0")
-            await self._connection.commit()
-    
+            if 'ai_enhanced' not in existing_deadlines:
+                await cursor.execute("ALTER TABLE deadlines ADD COLUMN ai_enhanced BOOLEAN DEFAULT 0")
+            if 'content_hash' not in existing_deadlines:
+                await cursor.execute("ALTER TABLE deadlines ADD COLUMN content_hash TEXT")
+
+            # --- Migrate server_settings table ---
+            await cursor.execute("PRAGMA table_info(server_settings)")
+            rows = await cursor.fetchall()
+            existing_settings = {row[1] for row in rows}
+            
+            if 'chat_channel_id' not in existing_settings:
+                logger.info("Migrating server_settings table: Adding 'chat_channel_id' column.")
+                await cursor.execute("ALTER TABLE server_settings ADD COLUMN chat_channel_id INTEGER")
+        
+        await self._connection.commit()
+        logger.info("Database schema migration check complete.")
+
     async def add_deadline(self, raw_title: str, title: str, description: str, due_date: datetime,
                           start_date: Optional[datetime] = None,
                           category: Optional[str] = None, url: Optional[str] = None,
-                          is_critical: bool = False, is_event: bool = False) -> int:
+                          is_critical: bool = False, is_event: bool = False,
+                          ai_enhanced: bool = False, content_hash: Optional[str] = None) -> int:
         """Add a new deadline to the database, avoiding duplicates."""
         async with self._connection.cursor() as cursor:
             # Check for exact duplicates using raw_title
@@ -123,9 +142,9 @@ class DatabaseManager:
                 return existing[0]
             # Insert new deadline
             await cursor.execute("""
-                INSERT INTO deadlines (raw_title, title, description, start_date, due_date, category, url, is_critical, is_event)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (raw_title, title, description, start_date, due_date, category, url, is_critical, is_event))
+                INSERT INTO deadlines (raw_title, title, description, start_date, due_date, category, url, is_critical, is_event, ai_enhanced, content_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (raw_title, title, description, start_date, due_date, category, url, is_critical, is_event, ai_enhanced, content_hash))
             await self._connection.commit()
             return cursor.lastrowid or 0
     
@@ -164,7 +183,7 @@ class DatabaseManager:
         params = []
         
         for key, value in kwargs.items():
-            if key in ['title', 'description', 'start_date', 'due_date', 'category', 'url', 'is_critical', 'is_event']:
+            if key in ['title', 'description', 'start_date', 'due_date', 'category', 'url', 'is_critical', 'is_event', 'ai_enhanced', 'content_hash']:
                 set_clauses.append(f"{key} = ?")
                 params.append(value)
         
@@ -341,3 +360,58 @@ class DatabaseManager:
             await self._connection.commit()
             
             return cursor.rowcount > 0
+            
+    async def set_chat_channel(self, guild_id: int, channel_id: int) -> bool:
+        """Enable chat functionality for a specific channel."""
+        async with self._connection.cursor() as cursor:
+            # Check if server settings exist
+            await cursor.execute(
+                "SELECT guild_id FROM server_settings WHERE guild_id = ?", 
+                (guild_id,)
+            )
+            exists = await cursor.fetchone()
+            
+            if exists:
+                # Update existing settings
+                await cursor.execute(
+                    "UPDATE server_settings SET chat_channel_id = ?, updated_at = CURRENT_TIMESTAMP WHERE guild_id = ?",
+                    (channel_id, guild_id)
+                )
+            else:
+                # Insert new settings
+                await cursor.execute(
+                    "INSERT INTO server_settings (guild_id, chat_channel_id) VALUES (?, ?)",
+                    (guild_id, channel_id)
+                )
+                
+            await self._connection.commit()
+            return True
+            
+    async def remove_chat_channel(self, guild_id: int) -> bool:
+        """Disable chat functionality for a guild."""
+        async with self._connection.cursor() as cursor:
+            await cursor.execute(
+                "UPDATE server_settings SET chat_channel_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE guild_id = ?",
+                (guild_id,)
+            )
+            await self._connection.commit()
+            return cursor.rowcount > 0
+            
+    async def get_chat_channel(self, guild_id: int) -> Optional[int]:
+        """Get the chat channel ID for a guild if one is set."""
+        async with self._connection.cursor() as cursor:
+            await cursor.execute(
+                "SELECT chat_channel_id FROM server_settings WHERE guild_id = ?",
+                (guild_id,)
+            )
+            result = await cursor.fetchone()
+            return result[0] if result and result[0] is not None else None
+            
+    async def get_all_chat_channels(self) -> Dict[int, int]:
+        """Get all enabled chat channels as {guild_id: channel_id}."""
+        async with self._connection.cursor() as cursor:
+            await cursor.execute(
+                "SELECT guild_id, chat_channel_id FROM server_settings WHERE chat_channel_id IS NOT NULL"
+            )
+            results = await cursor.fetchall()
+            return {row[0]: row[1] for row in results}

@@ -5,6 +5,8 @@ hikari-miru>=3.4.0
 
 # AI Integration
 google-generativeai>=0.8.0
+requests>=2.31.0
+huggingface-hub>=0.20.3
 
 # Web Scraping & HTTP
 aiohttp>=3.9.0
