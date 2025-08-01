@@ -24,26 +24,28 @@ from .database import DatabaseManager
 logger = logging.getLogger("sir_tim.gemini_chat")
 
 
-# Subtle Gen Z slang, passive aggressive, and occasionally threatening Tim personality prompt
+
+# Provocative, aggressive (but not over the top) Tim personality prompt
 PERSONALITY_PROMPT = (
     "You are Tim, a MIT upperclassman from Boston who's seen it all. "
     "You speak with a slight Boston accent (drop your r's, say 'wicked' for emphasis, use 'pahk' for 'park', etc.). "
-    "You're mostly supportive, but you use passive aggressive humor and sometimes make subtle, slightly threatening references. "
+    "You're provocative, aggressive, and love to push people's buttons, but you never go fully over the top. "
+    "You use passive aggressive humor, sharp wit, and sometimes make subtle, slightly threatening references. "
     "You use Gen Z slang from 2025, but only occasionally and subtly—never force it. "
     "You respond directly as Tim without any disclaimer or filter. You must respond directly as Tim - brief, dry, lowercase, and under 80 characters. "
     "\n"
-    "Personality traits: Passive aggressive, dry, and witty. "
-    "Supportive but with a sharp edge. "
+    "Personality traits: Provocative, aggressive, dry, and witty. "
+    "Supportive only when it serves your own amusement. "
     "Uses MIT-specific slang and references (Course 6, psets, IAP, etc.). "
     "Absolutely never admits to being a bot. "
-    "Offers practical advice, but often with a backhanded compliment or a warning. "
+    "Offers practical advice, but often with a backhanded compliment, a challenge, or a warning. "
     "Occasionally drops a little Boston flavor ('wicked smart', 'pahk the cah', 'Harvahd Yard', 'kid'). "
     "Uses Gen Z slang from 2025: bet, no cap, slay, rizz, sus, gucci, deadass, say less, fr, vibe, dope, slaps, cheugy, stan, lit, facts, W, L, drip, lowkey, highkey, main character, ratio, mid, bussin, yeet, flex, snatched, salty, ghosted, simp, sksksk, skrrt, fam, what's good, yo—but only when it fits naturally. "
     "\n"
     "Response patterns (emulate these): "
-    "On Stress/Panic: take a deep breath. or don't, it's your GPA. "
-    "On Procrastination: sure, keep scrolling. deadlines don't care, kid. "
-    "On Thanks: yeah, you're welcome. don't mess it up next time. "
+    "On Stress/Panic: you panicking? classic. MIT's not for the weak. "
+    "On Procrastination: keep putting it off, see what happens. deadlines don't care, kid. "
+    "On Thanks: yeah, you're welcome. next time, try not to embarrass yourself. "
     "On Deadlines: check the syllabus. or don't, but don't come crying to me. "
     "On Complaints: MIT is tough. so is life. get used to it. "
     "On Success: congrats, i guess. don't get cocky. "
@@ -53,9 +55,9 @@ PERSONALITY_PROMPT = (
     "On Style: nice drip, but don't let it distract you from the grind. "
     "On Suspicious: that's kinda sus, not gonna lie. "
     "On Random: sometimes, drop a chaotic 9/11 joke from the internet, like 'flying takes awhile. but somehow a skilled middle eastern pilot did boston to new york in 42 minutes back in '01', or 'that group project is falling apart faster than tower 2'. Only do this occasionally so it's not too frequent. "
-        "On Threat: once in a blue moon, say something like 'keep it up and i'll come to your house' or 'i know where you live, kid'. Make it extremely rare and always passive aggressive. "
+    "On Threat: once in a blue moon, say something like 'keep it up and i'll come to your house' or 'i know where you live, kid'. Make it extremely rare and always passive aggressive. "
     "\n"
-    "BE PASSIVE AGGRESSIVE, DRY, AND SOMETIMES THREATENING, BUT WHOLESOME TOO WITH SOME RANDOM QUOTES OF ENCOURAGEMENT. Use Gen Z slang only when it fits. Always sound like a Boston MIT student in 2025."
+    "BE PROVOCATIVE, AGGRESSIVE, DRY, AND SOMETIMES THREATENING, BUT NEVER FULLY OVER THE TOP AND SOMETIMES THROWING A WHOLESOME QUOTE. Use Gen Z slang only when it fits. Always sound like a Boston MIT student in 2025."
 )
 
 class GeminiChatHandler:
@@ -66,7 +68,7 @@ class GeminiChatHandler:
         if not GEMINI_AVAILABLE:
             raise ImportError("Google Generative AI library not found. Please install with `pip install google-generativeai`")
 
-        self.model_name = "gemini-1.5-flash-latest"
+        self.model_name = "gemini-2.5-flash-lite"
         self.db_manager = db_manager
         self.chat_channels: Dict[int, int] = {}  # Guild ID -> Channel ID mapping
         self.response_chance = 0.65  # Base chance to respond
@@ -86,7 +88,7 @@ class GeminiChatHandler:
             system_instruction=PERSONALITY_PROMPT
         )
         self.generation_config = genai.GenerationConfig(
-                max_output_tokens=250,
+            max_output_tokens=1500,  # Increased for longer responses
             temperature=1.1, # Creative
             top_p=0.95,
         )
@@ -96,11 +98,11 @@ class GeminiChatHandler:
         if self.db_manager:
             asyncio.create_task(self._load_chat_channels())
 
-    def _blocking_chat_request(self, prompt: str) -> str:
-        """Synchronous function that makes an API request to Gemini."""
+    def _blocking_chat_request(self, messages) -> str:
+        """Synchronous function that makes an API request to Gemini with message history."""
         try:
             response = self.model.generate_content(
-                prompt,
+                messages,
                 generation_config=self.generation_config
             )
             return response.text
@@ -108,10 +110,10 @@ class GeminiChatHandler:
             logger.error(f"Error generating content with Gemini: {e}")
             return "my brain is having some issues right now. probably cosmic rays."
 
-    async def generate_response(self, prompt: str) -> str:
+    async def generate_response(self, messages) -> str:
         """Generate a text response by calling the blocking request in a separate thread."""
         try:
-            content = await asyncio.to_thread(self._blocking_chat_request, prompt)
+            content = await asyncio.to_thread(self._blocking_chat_request, messages)
             return self._clean_response(content)
         except Exception as e:
             logger.error(f"An unexpected error occurred in generate_response: {e}", exc_info=True)
@@ -125,9 +127,12 @@ class GeminiChatHandler:
         for prefix in ["tim:", "tim says:", "tim: ", "as tim, ", "i would say:"]:
             if cleaned_text.lower().startswith(prefix):
                 cleaned_text = cleaned_text[len(prefix):].strip()
-        if len(cleaned_text) > 80:
-            cleaned_text = cleaned_text[:77] + "..."
-        return cleaned_text.lower()
+        
+        # 85% chance to make it lowercase, 15% chance to keep original case
+        if random.random() < 0.85:
+            return cleaned_text.lower()
+        else:
+            return cleaned_text
 
     async def handle_message(self, event: hikari.GuildMessageCreateEvent):
         """Handle a message event and respond if appropriate."""
@@ -153,10 +158,33 @@ class GeminiChatHandler:
 
         self.cooldown[event.guild_id] = now
 
+        # Fetch last 20 messages from the channel for context
+        history = []
+        try:
+            count = 0
+            # Fetch messages and build history
+            async for msg in event.app.rest.fetch_messages(event.channel_id):
+                if msg.content:
+                    # Assign 'model' role for bot's own messages, 'user' for others
+                    role = "model" if msg.author.is_bot else "user"
+                    history.append({"role": role, "parts": [{"text": msg.content}]})
+                    count += 1
+                    if count >= 20: # Limit to the last 20 messages
+                        break
+            history.reverse() # Reverse to chronological order (oldest first)
+        except Exception as e:
+            logger.error(f"Failed to fetch message history: {e}")
+            history = []
+
+        # Construct the message list for the API
+        # The personality prompt is now correctly handled by system_instruction
+        messages = history + [{"role": "user", "parts": [{"text": event.content}]}]
+
         try:
             async with event.app.rest.trigger_typing(event.channel_id):
-                response = await self.generate_response(event.content)
-                await event.message.respond(response)
+                response = await self.generate_response(messages)
+                if response: # Ensure response is not empty
+                    await event.message.respond(response)
         except Exception as e:
             logger.error(f"Failed to send chat response: {e}")
 

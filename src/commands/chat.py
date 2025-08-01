@@ -21,7 +21,7 @@ import logging
 import hikari
 import arc
 
-from src.hf_handler import HuggingFaceHandler
+import gemini_chat_handler
 
 logger = logging.getLogger("sir_tim.commands.chat")
 
@@ -43,7 +43,7 @@ async def set_chat_channel(ctx: arc.GatewayContext) -> None:
         return
     
     try:
-        llm_handler = ctx.client.get_type_dependency(HuggingFaceHandler)
+        llm_handler = ctx.client.get_type_dependency(gemini_chat_handler.GeminiChatHandler)
         
         # Set the current channel as the chat channel
         await llm_handler.set_chat_channel(ctx.guild_id, ctx.channel_id)

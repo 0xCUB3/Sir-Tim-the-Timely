@@ -69,7 +69,7 @@ class SirTimBot:
         self.scraper = None
         self.ai_handler = None
         self.reminder_system = None
-        self.chat_handler = None
+        self.gemini_chat_handler = None
         
     async def setup_components(self):
         """Initialize all bot components."""
@@ -100,14 +100,13 @@ class SirTimBot:
             self.reminder_system = ReminderSystem(self.bot, self.db_manager)
             logger.info("Reminder system initialized")
             
-            # Initialize the chat handler for chat responses
+            # Initialize the Gemini chat handler for contextual chat responses
             if self.gemini_api_key:
-                self.chat_handler = GeminiChatHandler(api_key=self.gemini_api_key, db_manager=self.db_manager)
-                logger.info("Gemini chat handler initialized")
+                self.gemini_chat_handler = GeminiChatHandler(api_key=self.gemini_api_key, db_manager=self.db_manager)
+                logger.info("Gemini chat handler initialized for advanced contextual chat.")
             else:
-                self.chat_handler = None
                 logger.warning("Gemini chat handler is disabled, no GEMINI_API_KEY provided.")
-            
+
             # Set up dependency injection
             self.client.set_type_dependency(DatabaseManager, self.db_manager)
             self.client.set_type_dependency(MITDeadlineScraper, self.scraper)
@@ -115,8 +114,8 @@ class SirTimBot:
             self.client.set_type_dependency(miru.Client, self.miru_client)
             if self.ai_handler:
                 self.client.set_type_dependency(AIHandler, self.ai_handler)
-            if self.chat_handler:
-                self.client.set_type_dependency(GeminiChatHandler, self.chat_handler)
+            if self.gemini_chat_handler:
+                self.client.set_type_dependency(GeminiChatHandler, self.gemini_chat_handler)
             
         except Exception as e:
             logger.error(f"Failed to initialize components: {e}")
@@ -132,8 +131,8 @@ class SirTimBot:
             if use_simplified:
                 extensions = [
                     "src.commands.simplified_interface",
-                    "src.commands.admin",  # Keep admin commands
-                    "src.commands.chat",   # Chat functionality
+                    "src.commands.admin",
+                    "src.commands.chat",
                 ]
                 logger.info("Loading simplified user interface")
             else:
@@ -141,7 +140,7 @@ class SirTimBot:
                     "src.commands.deadlines",
                     "src.commands.admin", 
                     "src.commands.utils",
-                    "src.commands.chat",   # Chat functionality
+                    "src.commands.chat",
                 ]
                 logger.info("Loading traditional command interface")
             
@@ -188,9 +187,9 @@ class SirTimBot:
             
     async def on_message(self, event: hikari.GuildMessageCreateEvent) -> None:
         """Handle incoming guild messages."""
-        # Process message with the chat handler for chat features
-        if self.chat_handler:
-            await self.chat_handler.handle_message(event)
+        # Main conversational AI uses Gemini if available
+        if self.gemini_chat_handler:
+            await self.gemini_chat_handler.handle_message(event)
     
     # Note: This method is no longer used; the setup is done directly in main()
     async def load_and_start(self):

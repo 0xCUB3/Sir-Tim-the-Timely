@@ -109,18 +109,17 @@ async def tim_main(
         # Use AI for natural language processing if available
         if ai_handler:
             # Show typing while AI processes the query
-            async with ctx.bot.rest.trigger_typing(ctx.channel_id):
+            async with ctx.client.rest.trigger_typing(ctx.channel_id):
                 response = await ai_handler.process_natural_query(query)
-            
-            embed = hikari.Embed(
-                title="🤖 Tim's Response",
-                description=response,
-                color=0x4285F4,
-                timestamp=datetime.now(timezone.utc)
-            )
-            embed.set_footer(text="💡 Tip: Try '/tim' with no text to see upcoming deadlines")
-            view = ViewAllDeadlinesView()
-            await ctx.respond(embed=embed, components=view)
+                embed = hikari.Embed(
+                    title="🤖 Tim's Response",
+                    description=response,
+                    color=0x4285F4,
+                    timestamp=datetime.now(timezone.utc)
+                )
+                embed.set_footer(text="💡 Tip: Try '/tim' with no text to see upcoming deadlines")
+                view = ViewAllDeadlinesView()
+                await ctx.respond(embed=embed, components=view)
         else:
             # Fallback to keyword search
             results = await db_manager.search_deadlines(query)
