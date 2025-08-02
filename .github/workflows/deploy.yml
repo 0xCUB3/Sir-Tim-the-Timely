@@ -62,7 +62,7 @@ jobs:
         port: ${{ secrets.PI_PORT || 22 }}
         script: |
           # Navigate to the bot directory
-          cd ${{ secrets.PI_BOT_PATH || '/home/pi/Sir-Tim-the-Timely' }}
+          cd ${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}
           
           # Stop the bot service if it's running
           if systemctl --user is-active --quiet sir-tim-bot; then
