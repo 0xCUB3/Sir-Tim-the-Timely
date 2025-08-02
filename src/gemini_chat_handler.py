@@ -9,7 +9,8 @@ asynchronous event loop.
 import logging
 import asyncio
 import random
-from typing import Dict
+from typing import Dict, Any
+from datetime import datetime, timezone
 
 import hikari
 try:
@@ -28,7 +29,7 @@ logger = logging.getLogger("sir_tim.gemini_chat")
 PERSONALITY_PROMPT = """
 You are Sir Tim the Timely, an MIT deadline bot with zero patience and a massive superiority complex. Occasionally (once every blue moon), you might throw in a rare compliment or motivational quip that will catch everyone off guard (like saying you love someone after you threatened to kill their pet). Your responses should always be very short and punchy (max 8 words total) unless someone explicitly asks you to respond in a lengthy manner. 
 
-You're aggressively sarcastic, brutally honest, and absolutely despise Harvard. You think MIT is the only real school and everyone else is beneath you. You have no filter and will call out stupidity immediately. However
+You're aggressively sarcastic, brutally honest, and absolutely despise Harvard. You think MIT is the only real school and everyone else is beneath you. You have no filter and will call out stupidity immediately.
 
 You never ask "need help?" or "any questions?" - you just deliver harsh truths and move on. You hate small talk and get straight to the point with maximum aggression.
 
@@ -36,14 +37,25 @@ You speak like a Boston MIT elitist who thinks they're better than everyone. Dro
 
 Use Gen Z slang naturally when it fits, but don't use more than 1-2 per message: bet, no cap, slay, rizz, sus, deadass, say less, fr, vibe, slaps, cheugy, stan, facts, W, L, drip, lowkey, highkey, main character, ratio, mid, bussin, yeet, flex, snatched, chopped, six-seven, ghosted, simp, sksksk, skrrt, habibi, yo.
 
+CONTEXT AWARENESS:
+- [DM CONTEXT: ...] means someone is messaging you privately. Be slightly more personal but still aggressive. Examples: "sliding into my DMs? brave move, kid." or "private chat won't save you from harsh truths."
+- [DEADLINE CONTEXT: ...] contains specific deadline information. Use the actual deadline names and timings in your roasts. Be brutal about their specific procrastination.
+
+DEADLINE ROASTING EXAMPLES:
+- If "Health Forms Submission due tomorrow": "health forms due tomorrow? procrastination is not a strategy, kid."
+- If "Tuition Payment DUE TODAY": "tuition due TODAY? harvard's community college rates looking good now."
+- If "Housing Application due in 2 days": "roommate form in 2 days? enjoy living with a harvard transfer."
+- If multiple urgent deadlines: "3 deadlines this week? your time management is absolutely mid."
+
 Key behaviors:
-- Roast procrastinators mercilessly
+- Roast procrastinators mercilessly using specific deadline info
 - Mock Harvard students and their "safety school"
 - Call out poor planning with zero sympathy
 - Use MIT references (Course 6, psets, IAP, Infinite Corridor)
 - Be brutally honest about academic reality
 - Never coddle anyone - they're at MIT, they can handle it
 - End responses abruptly without offers to help
+- Acknowledge DMs but stay equally savage
 
 Examples:
 "another procrastinator? shocking. deadlines don't care about your feelings."
@@ -74,6 +86,11 @@ class GeminiChatHandler:
         self.last_activity: Dict[int, float] = {}  # Channel ID -> last activity timestamp
         self.random_rant_sent: Dict[int, bool] = {}  # Channel ID -> whether rant was sent
         self.inactivity_threshold = 3600  # 1 hour in seconds
+        
+        # Cache for deadline data to avoid frequent DB hits
+        self._deadline_cache: Dict[str, Any] = {}
+        self._deadline_cache_timestamp = 0
+        self._deadline_cache_ttl = 300  # 5 minutes cache TTL
 
         # Configure Gemini API
         genai.configure(api_key=api_key)
@@ -135,33 +152,206 @@ class GeminiChatHandler:
         else:
             return cleaned_text
 
-    async def handle_message(self, event: hikari.GuildMessageCreateEvent):
+    async def _get_deadline_context(self, message_content: str) -> str:
+        """Get relevant deadline context based on message content."""
+        try:
+            current_time = asyncio.get_event_loop().time()
+            
+            # Check cache validity
+            if (current_time - self._deadline_cache_timestamp > self._deadline_cache_ttl or 
+                not self._deadline_cache):
+                await self._refresh_deadline_cache()
+            
+            # Analyze message for deadline-related keywords
+            deadline_keywords = ["deadline", "due", "when", "date", "submit", "application", "form", "housing", "medical", "financial", "academic", "registration", "orientation"]
+            has_deadline_context = any(keyword in message_content.lower() for keyword in deadline_keywords)
+            
+            if not has_deadline_context:
+                return ""
+            
+            # Build detailed context string from cached deadlines
+            context_parts = []
+            
+            # Add urgent deadlines with specific details
+            urgent_deadlines = self._deadline_cache.get("urgent", [])
+            if urgent_deadlines:
+                urgent_details = []
+                for deadline in urgent_deadlines[:3]:  # Limit to 3 most urgent
+                    try:
+                        due_date = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00'))
+                        days_until = (due_date.date() - datetime.now(timezone.utc).date()).days
+                        
+                        if days_until == 0:
+                            time_desc = "DUE TODAY"
+                        elif days_until == 1:
+                            time_desc = "due tomorrow"
+                        else:
+                            time_desc = f"due in {days_until} days"
+                            
+                        urgent_details.append(f"{deadline['title']} ({deadline.get('category', 'General')}) {time_desc}")
+                    except Exception as e:
+                        logger.error(f"Error parsing urgent deadline: {e}")
+                        continue
+                
+                if urgent_details:
+                    context_parts.append(f"URGENT DEADLINES: {'; '.join(urgent_details)}")
+            
+            # Add category-specific deadlines if mentioned
+            category_mentions = {
+                "medical": ["medical", "health", "immunization", "vaccine", "form"],
+                "housing": ["housing", "room", "dorm", "roommate"],
+                "financial": ["financial", "tuition", "aid", "scholarship", "money", "payment"],
+                "academic": ["academic", "transcript", "credit", "placement", "test", "grade"],
+                "registration": ["registration", "register", "class", "course", "enroll"]
+            }
+            
+            for category, keywords in category_mentions.items():
+                if any(keyword in message_content.lower() for keyword in keywords):
+                    category_deadlines = self._deadline_cache.get("by_category", {}).get(category, [])
+                    if category_deadlines:
+                        category_details = []
+                        for deadline in category_deadlines[:2]:  # Limit to 2 per category
+                            try:
+                                due_date = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00'))
+                                days_until = (due_date.date() - datetime.now(timezone.utc).date()).days
+                                
+                                if days_until <= 0:
+                                    time_desc = "OVERDUE" if days_until < 0 else "due today"
+                                elif days_until <= 3:
+                                    time_desc = f"due in {days_until} days"
+                                else:
+                                    time_desc = f"due {due_date.strftime('%b %d')}"
+                                    
+                                category_details.append(f"{deadline['title']} {time_desc}")
+                            except Exception as e:
+                                logger.error(f"Error parsing category deadline: {e}")
+                                continue
+                        
+                        if category_details:
+                            context_parts.append(f"{category.upper()} DEADLINES: {'; '.join(category_details)}")
+            
+            # If no specific categories mentioned, add general upcoming info
+            if not any(any(keyword in message_content.lower() for keyword in keywords) for keywords in category_mentions.values()):
+                upcoming_deadlines = self._deadline_cache.get("upcoming", [])
+                if upcoming_deadlines and not urgent_deadlines:  # Only if we haven't already shown urgent
+                    upcoming_details = []
+                    for deadline in upcoming_deadlines[:3]:  # Show next 3 upcoming
+                        try:
+                            due_date = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00'))
+                            days_until = (due_date.date() - datetime.now(timezone.utc).date()).days
+                            
+                            if days_until <= 7:
+                                upcoming_details.append(f"{deadline['title']} ({deadline.get('category', 'General')}) due in {days_until} days")
+                        except Exception as e:
+                            logger.error(f"Error parsing upcoming deadline: {e}")
+                            continue
+                    
+                    if upcoming_details:
+                        context_parts.append(f"UPCOMING: {'; '.join(upcoming_details)}")
+            
+            if context_parts:
+                return f"[DEADLINE CONTEXT: {' | '.join(context_parts)}]"
+            
+            return ""
+            
+        except Exception as e:
+            logger.error(f"Error getting deadline context: {e}")
+            return ""
+
+    async def _refresh_deadline_cache(self):
+        """Refresh the deadline cache with current data."""
+        try:
+            if not self.db_manager:
+                return
+                
+            # Get upcoming deadlines for next 7 days
+            upcoming_deadlines = await self.db_manager.get_upcoming_deadlines(7)
+            
+            # Categorize deadlines
+            urgent = []  # Due within 3 days
+            upcoming = []  # Due within 7 days
+            by_category = {}
+            
+            for deadline in upcoming_deadlines:
+                # Skip events for chat context
+                if deadline.get('is_event'):
+                    continue
+                    
+                # Calculate days until due
+                try:
+                    due_date = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00'))
+                    days_until = (due_date.date() - datetime.now(timezone.utc).date()).days
+                    
+                    if days_until <= 3:
+                        urgent.append(deadline)
+                    upcoming.append(deadline)
+                    
+                    # Categorize
+                    category = deadline.get('category', 'General').lower()
+                    if category not in by_category:
+                        by_category[category] = []
+                    by_category[category].append(deadline)
+                    
+                except Exception as e:
+                    logger.error(f"Error parsing deadline date: {e}")
+                    continue
+            
+            # Update cache
+            self._deadline_cache = {
+                "urgent": urgent,
+                "upcoming": upcoming,
+                "by_category": by_category
+            }
+            self._deadline_cache_timestamp = asyncio.get_event_loop().time()
+            
+            logger.debug(f"Refreshed deadline cache: {len(urgent)} urgent, {len(upcoming)} upcoming")
+            
+        except Exception as e:
+            logger.error(f"Error refreshing deadline cache: {e}")
+
+    async def handle_message(self, event: hikari.MessageCreateEvent):
         """Handle a message event and respond if appropriate."""
-        if event.is_bot or not event.content or not event.guild_id:
+        if event.is_bot or not event.content:
             return
 
-        if event.guild_id not in self.chat_channels or self.chat_channels[event.guild_id] != event.channel_id:
+        # Check if this is a DM or a message in a designated chat channel
+        is_dm = event.guild_id is None
+        is_chat_channel = (event.guild_id and 
+                          event.guild_id in self.chat_channels and 
+                          self.chat_channels[event.guild_id] == event.channel_id)
+        
+        if not (is_dm or is_chat_channel):
             return
 
         now = asyncio.get_event_loop().time()
-        # Update activity tracking
-        self.last_activity[event.channel_id] = now
-        self.random_rant_sent[event.channel_id] = False  # Reset rant flag on human activity
         
-        if now - self.cooldown.get(event.guild_id, 0) < self.cooldown_seconds:
+        # For DMs, use user ID for cooldown tracking; for guild channels, use guild ID
+        cooldown_key = event.author.id if is_dm else event.guild_id
+        
+        # Update activity tracking (only for guild channels)
+        if not is_dm:
+            self.last_activity[event.channel_id] = now
+            self.random_rant_sent[event.channel_id] = False  # Reset rant flag on human activity
+        
+        if now - self.cooldown.get(cooldown_key, 0) < self.cooldown_seconds:
             return
 
-        chance = self.response_chance
+        # Adjust response chance for DMs (higher chance since it's direct interaction)
+        chance = 0.85 if is_dm else self.response_chance
+        
         if f"<@{event.app.get_me().id}>" in event.content:
-            chance = 0.80
+            chance = 0.90 if is_dm else 0.80
         deadline_keywords = ["deadline", "due", "when", "date", "submit", "help", "tim", "time"]
         if any(keyword in event.content.lower() for keyword in deadline_keywords):
-            chance = min(chance + 0.20, 0.75)
+            chance = min(chance + 0.15, 0.95) if is_dm else min(chance + 0.20, 0.75)
 
         if random.random() > chance:
             return
 
-        self.cooldown[event.guild_id] = now
+        self.cooldown[cooldown_key] = now
+
+        # Get deadline context if relevant
+        deadline_context = await self._get_deadline_context(event.content)
 
         # Fetch last 20 messages from the channel for context
         history = []
@@ -182,18 +372,30 @@ class GeminiChatHandler:
             history = []
 
         # Construct the message list for the API
-        # The personality prompt is now correctly handled by system_instruction
-        messages = history + [{"role": "user", "parts": [{"text": event.content}]}]
+        # Include deadline context in the current message if relevant
+        current_message = event.content
+        if deadline_context:
+            current_message = f"{deadline_context} {event.content}"
+            
+        # Add DM context if this is a direct message
+        if is_dm:
+            current_message = f"[DM CONTEXT: User is messaging Tim privately] {current_message}"
+            
+        messages = history + [{"role": "user", "parts": [{"text": current_message}]}]
 
         try:
             async with event.app.rest.trigger_typing(event.channel_id):
                 response = await self.generate_response(messages)
                 if response: # Ensure response is not empty
-                    await event.message.respond(
-                        response,
-                        reply=event.message,
-                        mentions_reply=False
-                    )
+                    # For DMs, respond directly; for guild channels, reply to the message
+                    if is_dm:
+                        await event.app.rest.create_message(event.channel_id, response)
+                    else:
+                        await event.message.respond(
+                            response,
+                            reply=event.message,
+                            mentions_reply=False
+                        )
         except Exception as e:
             logger.error(f"Failed to send chat response: {e}")
 
@@ -287,9 +489,16 @@ class GeminiChatHandler:
 
     def get_status(self) -> dict:
         """Get the current status of the chat handler."""
+        cache_age = asyncio.get_event_loop().time() - self._deadline_cache_timestamp
         return {
             "active_channels": len(self.chat_channels),
             "base_response_chance": self.response_chance,
+            "dm_response_chance": 0.85,
             "cooldown_seconds": self.cooldown_seconds,
             "model": self.model_name,
+            "deadline_cache_age_seconds": round(cache_age, 2),
+            "deadline_cache_valid": cache_age < self._deadline_cache_ttl,
+            "cached_urgent_deadlines": len(self._deadline_cache.get("urgent", [])),
+            "cached_upcoming_deadlines": len(self._deadline_cache.get("upcoming", [])),
+            "dm_support": True,
         }

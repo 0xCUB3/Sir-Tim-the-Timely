@@ -55,6 +55,7 @@ class SirTimBot:
                 hikari.Intents.GUILDS
                 | hikari.Intents.GUILD_MESSAGES
                 | hikari.Intents.MESSAGE_CONTENT
+                | hikari.Intents.DM_MESSAGES
             )
         )
         
@@ -185,8 +186,8 @@ class SirTimBot:
         if self.db_manager:
             await self.db_manager.close()
             
-    async def on_message(self, event: hikari.GuildMessageCreateEvent) -> None:
-        """Handle incoming guild messages."""
+    async def on_message(self, event: hikari.MessageCreateEvent) -> None:
+        """Handle incoming messages from both guilds and DMs."""
         # Main conversational AI uses Gemini if available
         if self.gemini_chat_handler:
             await self.gemini_chat_handler.handle_message(event)
@@ -219,7 +220,7 @@ def main():
         sir_tim.bot.event_manager.subscribe(hikari.StartingEvent, sir_tim.on_starting)
         sir_tim.bot.event_manager.subscribe(hikari.StartedEvent, sir_tim.on_started)
         sir_tim.bot.event_manager.subscribe(hikari.StoppingEvent, sir_tim.on_stopping)
-        sir_tim.bot.event_manager.subscribe(hikari.GuildMessageCreateEvent, sir_tim.on_message)
+        sir_tim.bot.event_manager.subscribe(hikari.MessageCreateEvent, sir_tim.on_message)
         
         # Load extensions before running (need to use asyncio.run for this async operation)
         asyncio.run(sir_tim.load_extensions())
