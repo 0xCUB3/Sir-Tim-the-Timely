@@ -58,7 +58,7 @@ jobs:
       with:
         host: ${{ secrets.PI_HOST }}
         username: ${{ secrets.PI_USERNAME }}
-        key: ${{ secrets.PI_SSH_KEY }}
+        password: ${{ secrets.PI_PASSWORD }}
         port: ${{ secrets.PI_PORT || 22 }}
         script: |
           # Navigate to the bot directory
