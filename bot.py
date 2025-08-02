@@ -97,12 +97,12 @@ class SirTimBot:
             logger.info("MIT deadline scraper initialized")
             
             # Initialize reminder system
-            self.reminder_system = ReminderSystem(self.bot, self.db_manager)
+            self.reminder_system = ReminderSystem(self.bot, self.db_manager, self.ai_handler)
             logger.info("Reminder system initialized")
             
             # Initialize the Gemini chat handler for contextual chat responses
             if self.gemini_api_key:
-                self.gemini_chat_handler = GeminiChatHandler(api_key=self.gemini_api_key, db_manager=self.db_manager)
+                self.gemini_chat_handler = GeminiChatHandler(api_key=self.gemini_api_key, db_manager=self.db_manager, bot=self.bot)
                 logger.info("Gemini chat handler initialized for advanced contextual chat.")
             else:
                 logger.warning("Gemini chat handler is disabled, no GEMINI_API_KEY provided.")

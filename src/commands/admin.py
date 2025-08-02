@@ -15,6 +15,7 @@ from hikari.errors import NotFoundError, BadRequestError
 from ..database import DatabaseManager
 from ..scraper import MITDeadlineScraper
 from ..reminder_system import ReminderSystem
+from ..gemini_chat_handler import GeminiChatHandler
 
 logger = logging.getLogger("sir_tim.commands.admin")
 
@@ -38,17 +39,17 @@ async def scrape_deadlines(ctx: arc.GatewayContext) -> None:
     await ctx.defer()
     
     try:
-        await ctx.respond("Starting deadline scraping from MIT website...")
+        await ctx.respond("Starting deadline scraping from MIT website...", flags=hikari.MessageFlag.EPHEMERAL)
         
         # Perform scraping
         deadlines = await scraper.scrape_deadlines()
         
         # Send result
-        await ctx.respond(f"✅ Successfully scraped {len(deadlines)} deadlines from the MIT website!")
+        await ctx.respond(f"✅ Successfully scraped {len(deadlines)} deadlines from the MIT website!", flags=hikari.MessageFlag.EPHEMERAL)
         
     except Exception as e:
         logger.error(f"Error during manual scraping: {e}")
-        await ctx.respond(f"❌ Error scraping deadlines: {str(e)}")
+        await ctx.respond(f"❌ Error scraping deadlines: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
 
 @admin.include
 @arc.slash_subcommand("reminderchannel", "Set the channel for daily reminders")
@@ -68,11 +69,11 @@ async def set_reminder_channel(ctx: arc.GatewayContext) -> None:
             
         await reminder_system.set_reminder_channel(ctx.guild_id, ctx.channel_id)
         
-        await ctx.respond("✅ This channel has been set as the reminder channel.")
+        await ctx.respond("✅ This channel has been set as the reminder channel.", flags=hikari.MessageFlag.EPHEMERAL)
         
     except Exception as e:
         logger.error(f"Error setting reminder channel: {e}")
-        await ctx.respond(f"❌ Error setting reminder channel: {str(e)}")
+        await ctx.respond(f"❌ Error setting reminder channel: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
 
 @admin.include
 @arc.slash_subcommand("adddeadline", "Add a custom deadline")
@@ -124,11 +125,11 @@ async def add_deadline(
             is_critical=is_critical
         )
         
-        await ctx.respond(f"✅ Added custom deadline: **{title}** with ID: {deadline_id}")
+        await ctx.respond(f"✅ Added custom deadline: **{title}** with ID: {deadline_id}", flags=hikari.MessageFlag.EPHEMERAL)
         
     except Exception as e:
         logger.error(f"Error adding custom deadline: {e}")
-        await ctx.respond(f"❌ Error adding deadline: {str(e)}")
+        await ctx.respond(f"❌ Error adding deadline: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
 
 @admin.include
 @arc.slash_subcommand("testreminder", "Send a test reminder")
@@ -147,13 +148,13 @@ async def test_reminder(ctx: arc.GatewayContext) -> None:
         result = await reminder_system.send_test_reminder(ctx.channel_id)
         
         if result:
-            await ctx.respond("✅ Test reminder sent successfully!")
+            await ctx.respond("✅ Test reminder sent successfully!", flags=hikari.MessageFlag.EPHEMERAL)
         else:
-            await ctx.respond("❌ Failed to send test reminder.")
+            await ctx.respond("❌ Failed to send test reminder.", flags=hikari.MessageFlag.EPHEMERAL)
         
     except Exception as e:
         logger.error(f"Error sending test reminder: {e}")
-        await ctx.respond(f"❌ Error: {str(e)}")
+        await ctx.respond(f"❌ Error: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
 
 @admin.include
 @arc.slash_subcommand("status", "Show bot status information")
@@ -205,11 +206,11 @@ async def status_info(ctx: arc.GatewayContext) -> None:
         
         embed.set_footer(text="Sir Tim the Timely • Admin Panel")
         
-        await ctx.respond(embed=embed)
+        await ctx.respond(embed=embed, flags=hikari.MessageFlag.EPHEMERAL)
         
     except Exception as e:
         logger.error(f"Error getting status: {e}")
-        await ctx.respond(f"❌ Error retrieving status information: {str(e)}")
+        await ctx.respond(f"❌ Error retrieving status information: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
 
 @admin.include
 @arc.slash_subcommand("cleanup", "Clean up duplicate and old deadlines")
@@ -273,11 +274,11 @@ async def cleanup_deadlines(ctx: arc.GatewayContext) -> None:
         
         embed.set_footer(text="Sir Tim the Timely • Admin Panel")
         
-        await ctx.respond(embed=embed)
+        await ctx.respond(embed=embed, flags=hikari.MessageFlag.EPHEMERAL)
         
     except Exception as e:
         logger.error(f"Error during cleanup: {e}")
-        await ctx.respond(f"❌ Error during cleanup: {str(e)}")
+        await ctx.respond(f"❌ Error during cleanup: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
 
 @admin.include
 @arc.slash_subcommand("mergedeadlines", "Merge two duplicate deadlines")
@@ -301,7 +302,7 @@ async def merge_deadlines(ctx: arc.GatewayContext) -> None:
         remove_deadline = next((d for d in deadlines if d['id'] == remove_id), None)
         
         if not keep_deadline or not remove_deadline:
-            await ctx.respond("❌ One or both deadline IDs not found. Please check the IDs and try again.")
+            await ctx.respond("❌ One or both deadline IDs not found. Please check the IDs and try again.", flags=hikari.MessageFlag.EPHEMERAL)
             return
         
         # Perform the merge
@@ -329,13 +330,94 @@ async def merge_deadlines(ctx: arc.GatewayContext) -> None:
             
             embed.set_footer(text="Sir Tim the Timely • Admin Panel")
             
-            await ctx.respond(embed=embed)
+            await ctx.respond(embed=embed, flags=hikari.MessageFlag.EPHEMERAL)
         else:
-            await ctx.respond("❌ Failed to merge deadlines. Please check the IDs and try again.")
+            await ctx.respond("❌ Failed to merge deadlines. Please check the IDs and try again.", flags=hikari.MessageFlag.EPHEMERAL)
         
     except Exception as e:
         logger.error(f"Error merging deadlines: {e}")
-        await ctx.respond(f"❌ Error merging deadlines: {str(e)}")
+        await ctx.respond(f"❌ Error merging deadlines: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
+
+@admin.include
+@arc.slash_subcommand("testdigest", "Send a test weekly digest")
+async def test_digest(ctx: arc.GatewayContext) -> None:
+    """Send a test weekly digest to the current channel."""
+    # Only allow server admins to use this command
+    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
+        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+    
+    reminder_system = ctx.client.get_type_dependency(ReminderSystem)
+    
+    await ctx.defer()
+    
+    try:
+        # Temporarily set this channel as a reminder channel
+        original_channels = reminder_system.reminder_channels.copy()
+        reminder_system.reminder_channels[ctx.guild_id] = ctx.channel_id
+        
+        # Send the digest
+        await reminder_system._send_weekly_digest()
+        
+        # Restore original channels
+        reminder_system.reminder_channels = original_channels
+        
+        await ctx.respond("✅ Test weekly digest sent successfully!", flags=hikari.MessageFlag.EPHEMERAL)
+            
+    except Exception as e:
+        logger.error(f"Error sending test digest: {e}")
+        await ctx.respond(f"❌ Error sending test digest: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
+
+@admin.include
+@arc.slash_subcommand("setrole", "Set the role to ping for reminders and digests")
+async def set_reminder_role(
+    ctx: arc.GatewayContext,
+    role: arc.Option[hikari.Role, arc.RoleParams("Role to ping for reminders")]
+) -> None:
+    """Set the role to ping for reminders and weekly digests."""
+    # Only allow server admins to use this command
+    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
+        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+    
+    reminder_system = ctx.client.get_type_dependency(ReminderSystem)
+    
+    try:
+        # Update the reminder role
+        reminder_system.reminder_role_id = str(role.id)
+        
+        await ctx.respond(f"✅ Reminder role set to {role.mention}. This role will be pinged for weekly digests and urgent reminders.", flags=hikari.MessageFlag.EPHEMERAL)
+        
+    except Exception as e:
+        logger.error(f"Error setting reminder role: {e}")
+        await ctx.respond(f"❌ Error setting reminder role: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
+
+@admin.include
+@arc.slash_subcommand("testrant", "Send a test random rant")
+async def test_rant(ctx: arc.GatewayContext) -> None:
+    """Send a test random rant to the current channel."""
+    # Only allow server admins to use this command
+    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
+        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+    
+    chat_handler = ctx.client.get_type_dependency(GeminiChatHandler)
+    
+    if not chat_handler:
+        await ctx.respond("❌ Chat handler not available.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+    
+    try:
+        await ctx.defer(flags=hikari.MessageFlag.EPHEMERAL)
+        
+        # Send a random rant to the current channel
+        await chat_handler._send_random_rant(ctx.channel_id)
+        
+        await ctx.respond("✅ Test rant sent successfully!", flags=hikari.MessageFlag.EPHEMERAL)
+            
+    except Exception as e:
+        logger.error(f"Error sending test rant: {e}")
+        await ctx.respond(f"❌ Error sending test rant: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
 
 @arc.loader
 def load(client: arc.GatewayClient) -> None:

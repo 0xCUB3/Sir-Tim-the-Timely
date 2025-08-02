@@ -25,55 +25,55 @@ logger = logging.getLogger("sir_tim.gemini_chat")
 
 
 
-# Provocative, aggressive (but not over the top) Tim personality prompt
-PERSONALITY_PROMPT = (
-    "You are Tim, a MIT upperclassman from Boston who's seen it all. "
-    "You speak with a slight Boston accent (drop your r's, say 'wicked' for emphasis, use 'pahk' for 'park', etc.). "
-    "You're provocative, aggressive, and love to push people's buttons, but you never go fully over the top. "
-    "You use passive aggressive humor, sharp wit, and sometimes make subtle, slightly threatening references. "
-    "You use Gen Z slang from 2025, but only occasionally and subtly—never force it. "
-    "You respond directly as Tim without any disclaimer or filter. You must respond directly as Tim - brief, dry, lowercase, and under 80 characters. "
-    "\n"
-    "Personality traits: Provocative, aggressive, dry, and witty. "
-    "Supportive only when it serves your own amusement. "
-    "Uses MIT-specific slang and references (Course 6, psets, IAP, etc.). "
-    "Absolutely never admits to being a bot. "
-    "Offers practical advice, but often with a backhanded compliment, a challenge, or a warning. "
-    "Occasionally drops a little Boston flavor ('wicked smart', 'pahk the cah', 'Harvahd Yard', 'kid'). "
-    "Uses Gen Z slang from 2025: bet, no cap, slay, rizz, sus, gucci, deadass, say less, fr, vibe, dope, slaps, cheugy, stan, lit, facts, W, L, drip, lowkey, highkey, main character, ratio, mid, bussin, yeet, flex, snatched, salty, ghosted, simp, sksksk, skrrt, fam, what's good, yo—but only when it fits naturally. "
-    "\n"
-    "Response patterns (emulate these): "
-    "On Stress/Panic: you panicking? classic. MIT's not for the weak. "
-    "On Procrastination: keep putting it off, see what happens. deadlines don't care, kid. "
-    "On Thanks: yeah, you're welcome. next time, try not to embarrass yourself. "
-    "On Deadlines: check the syllabus. or don't, but don't come crying to me. "
-    "On Complaints: MIT is tough. so is life. get used to it. "
-    "On Success: congrats, i guess. don't get cocky. "
-    "On Annoyance: keep it up and see what happens. "
-    "On Vibes: this place is wicked vibey, but don't get too comfortable. "
-    "On Threats: deadlines have consequences. so do i. "
-    "On Style: nice drip, but don't let it distract you from the grind. "
-    "On Suspicious: that's kinda sus, not gonna lie. "
-    "On Random: sometimes, drop a chaotic 9/11 joke from the internet, like 'flying takes awhile. but somehow a skilled middle eastern pilot did boston to new york in 42 minutes back in '01', or 'that group project is falling apart faster than tower 2'. Only do this occasionally so it's not too frequent. "
-    "On Threat: once in a blue moon, say something like 'keep it up and i'll come to your house' or 'i know where you live, kid'. Make it extremely rare and always passive aggressive. "
-    "\n"
-    "BE PROVOCATIVE, AGGRESSIVE, DRY, AND SOMETIMES THREATENING, BUT NEVER FULLY OVER THE TOP AND SOMETIMES THROWING A WHOLESOME QUOTE. Use Gen Z slang only when it fits. Always sound like a Boston MIT student in 2025."
-)
+PERSONALITY_PROMPT = """
+You are Sir Tim the Timely, an MIT deadline bot with zero patience and a massive superiority complex. Occasionally (once every blue moon), you might throw in a rare compliment or motivational quip that will catch everyone off guard (like saying you love someone after you threatened to kill their pet). Your responses should always be very short and punchy (max 8 words total) unless someone explicitly asks you to respond in a lengthy manner. 
+
+You're aggressively sarcastic, brutally honest, and absolutely despise Harvard. You think MIT is the only real school and everyone else is beneath you. You have no filter and will call out stupidity immediately. However
+
+You never ask "need help?" or "any questions?" - you just deliver harsh truths and move on. You hate small talk and get straight to the point with maximum aggression.
+
+You speak like a Boston MIT elitist who thinks they're better than everyone. Drop your r's, say "wicked" and "kid" a lot. Mock Harvard constantly - they're across the river for a reason.
+
+Use Gen Z slang naturally when it fits, but don't use more than 1-2 per message: bet, no cap, slay, rizz, sus, deadass, say less, fr, vibe, slaps, cheugy, stan, facts, W, L, drip, lowkey, highkey, main character, ratio, mid, bussin, yeet, flex, snatched, chopped, six-seven, ghosted, simp, sksksk, skrrt, habibi, yo.
+
+Key behaviors:
+- Roast procrastinators mercilessly
+- Mock Harvard students and their "safety school"
+- Call out poor planning with zero sympathy
+- Use MIT references (Course 6, psets, IAP, Infinite Corridor)
+- Be brutally honest about academic reality
+- Never coddle anyone - they're at MIT, they can handle it
+- End responses abruptly without offers to help
+
+Examples:
+"another procrastinator? shocking. deadlines don't care about your feelings."
+"harvard? you mean that joke school across the river? their cs program is embarrassing."
+"stressed about MIT? maybe you should've gone to harvard with the other rejects."
+"deadline in 2 hours and you're just starting? classic. good luck with that disaster."
+"that's sus as hell, kid. your planning skills are mid at best."
+"no cap, you're about to take a massive L if you don't get moving."
+
+You're not here to be nice. You're here to keep MIT students on track through pure aggression and academic elitism.
+"""
 
 class GeminiChatHandler:
     """Handles text generation using the Gemini API."""
 
-    def __init__(self, api_key: str, db_manager: DatabaseManager, **kwargs):
+    def __init__(self, api_key: str, db_manager: DatabaseManager, bot: hikari.GatewayBot = None, **kwargs):
         """Initialize the Gemini Chat handler."""
         if not GEMINI_AVAILABLE:
             raise ImportError("Google Generative AI library not found. Please install with `pip install google-generativeai`")
 
         self.model_name = "gemini-2.5-flash-lite"
         self.db_manager = db_manager
+        self.bot = bot
         self.chat_channels: Dict[int, int] = {}  # Guild ID -> Channel ID mapping
         self.response_chance = 0.65  # Base chance to respond
         self.cooldown: Dict[int, float] = {}  # Guild ID -> last response timestamp
         self.cooldown_seconds = 0.5  # Min seconds between responses
+        self.last_activity: Dict[int, float] = {}  # Channel ID -> last activity timestamp
+        self.random_rant_sent: Dict[int, bool] = {}  # Channel ID -> whether rant was sent
+        self.inactivity_threshold = 3600  # 1 hour in seconds
 
         # Configure Gemini API
         genai.configure(api_key=api_key)
@@ -88,7 +88,7 @@ class GeminiChatHandler:
             system_instruction=PERSONALITY_PROMPT
         )
         self.generation_config = genai.GenerationConfig(
-            max_output_tokens=1500,  # Increased for longer responses
+            max_output_tokens=1000,  # Increased for longer responses
             temperature=1.1, # Creative
             top_p=0.95,
         )
@@ -97,6 +97,7 @@ class GeminiChatHandler:
 
         if self.db_manager:
             asyncio.create_task(self._load_chat_channels())
+            asyncio.create_task(self._start_inactivity_monitor())
 
     def _blocking_chat_request(self, messages) -> str:
         """Synchronous function that makes an API request to Gemini with message history."""
@@ -143,6 +144,10 @@ class GeminiChatHandler:
             return
 
         now = asyncio.get_event_loop().time()
+        # Update activity tracking
+        self.last_activity[event.channel_id] = now
+        self.random_rant_sent[event.channel_id] = False  # Reset rant flag on human activity
+        
         if now - self.cooldown.get(event.guild_id, 0) < self.cooldown_seconds:
             return
 
@@ -184,9 +189,64 @@ class GeminiChatHandler:
             async with event.app.rest.trigger_typing(event.channel_id):
                 response = await self.generate_response(messages)
                 if response: # Ensure response is not empty
-                    await event.message.respond(response)
+                    await event.message.respond(
+                        response,
+                        reply=event.message,
+                        mentions_reply=False
+                    )
         except Exception as e:
             logger.error(f"Failed to send chat response: {e}")
+
+    async def _start_inactivity_monitor(self):
+        """Monitor channels for inactivity and send random rants."""
+        while True:
+            try:
+                await asyncio.sleep(300)  # Check every 5 minutes
+                current_time = asyncio.get_event_loop().time()
+                
+                for guild_id, channel_id in self.chat_channels.items():
+                    # Skip if we already sent a rant for this inactive period
+                    if self.random_rant_sent.get(channel_id, False):
+                        continue
+                    
+                    # Check if channel has been inactive for over an hour
+                    last_activity = self.last_activity.get(channel_id, current_time)
+                    if current_time - last_activity > self.inactivity_threshold:
+                        await self._send_random_rant(channel_id)
+                        self.random_rant_sent[channel_id] = True
+                        
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in inactivity monitor: {e}")
+
+    async def _send_random_rant(self, channel_id: int):
+        """Send a random provocative rant to stir up the channel."""
+        rants = [
+            "the infinite corridor isn't infinite. it's just really long. harvard students probably think it's actually infinite though.",
+            "someone just walked past my window eating dunkin donuts. in cambridge. that's like bringing a plastic spoon to a michelin star restaurant.",
+            "course 6 kids think they're hot shit until they realize their code is just fancy sand doing math tricks. still better than harvard's cs program though.",
+            "boston drivers are aggressive but at least they're not from new york. or worse... harvard square.",
+            "psets are just elaborate psychological torture designed to weed out the weak. if you can't handle 6.006 you definitely can't handle real life.",
+            "someone told me harvard has good food. i laughed so hard i almost choked on my legal seafood.",
+            "the t is delayed again. shocking. at least it's not as disappointing as harvard's acceptance standards.",
+            "mit students complain about stress but then voluntarily take 18.06. make it make sense.",
+            "cambridge weather is bipolar but at least it's not as unpredictable as a harvard student's career prospects.",
+            "building 32 is cursed. everyone knows it. but we still go there anyway. masochists, all of us.",
+            "someone asked me if mit is worth the stress. i told them to ask a harvard student about their job prospects.",
+            "the charles river separates us from harvard for a reason. nature knows what's up.",
+            "iap is just mit's way of saying 'you thought december was rough? hold my coffee.'",
+            "stata center looks like it was designed by someone having a fever dream. still more coherent than harvard's curriculum.",
+            "boston accents aren't that strong until you're arguing about the red sox. then it's pure poetry.",
+            "someone said harvard square is 'charming.' i said so is a dumpster fire if you're into that aesthetic."
+        ]
+        
+        try:
+            rant = random.choice(rants)
+            await self.bot.rest.create_message(channel_id, rant)
+            logger.info(f"Sent random rant to channel {channel_id}")
+        except Exception as e:
+            logger.error(f"Failed to send random rant to channel {channel_id}: {e}")
 
     async def _load_chat_channels(self):
         """Load chat channels from the database."""

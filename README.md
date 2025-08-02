@@ -4,22 +4,16 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 
 ## 🚀 Features
 
-### 📅 Deadline Management
-- **Automatic Deadline Scraping**: Periodically fetches and updates deadlines from MIT's official First Year website
-- **AI-Enhanced Title Generation**: Uses Gemini 2.0 Flash Lite with efficient batch processing to create ultra-concise, action-oriented deadline titles
-- **Smart Deadline Parsing**: Extracts dates, descriptions, and links from the MIT deadlines page with automatic email formatting
-- **Deadline Categories**: Organizes deadlines by type (Medical, Academic, Housing, Financial, etc.)
-- **Time Zone Support**: All deadlines displayed in EDT/EST with user timezone conversion
+### 📅 Simple Deadline Management
+- **Automatic Deadline Scraping**: Fetches and updates deadlines from MIT's official First Year website
+- **AI-Enhanced Chat**: Natural language queries about deadlines using Gemini AI
+- **Smart Deadline Display**: Clean, easy-to-read deadline information
 
-### 🔔 Intelligent Reminders
-- **Automated Daily Reminders**: Daily digest of upcoming deadlines (configurable times)
-- **Urgency-Based Notifications**: Different reminder frequencies based on deadline proximity
-  - 2 weeks before: Weekly reminders
-  - 1 week before: Every 2 days
-  - 3 days before: Daily reminders
-  - 1 day before: Multiple reminders
-- **Personalized Reminders**: Users can set custom reminders for specific deadlines
-- **Smart Filtering**: Only reminds about relevant deadlines (e.g., no FPOP reminders if not applicable)
+### 🔔 Simple Reminders
+- **24-Hour Reminders**: Get notified 24 hours before deadlines
+- **6-Hour Reminders**: Final reminder 6 hours before deadlines  
+- **Weekly Digest**: Sunday morning summary with a funny motivational quote
+- **Role Pinging**: Configure a role to be pinged for all reminders
 
 ### 🤖 AI-Powered Natural Language Interface (Gemini 2.0 Flash Lite)
 - **Natural Language Queries**: Ask questions like "When is the housing application due?" or "What do I need to do before July?"
@@ -28,34 +22,26 @@ A sophisticated Discord bot built with Hikari and Hikari-Arc that helps MIT firs
 - **Smart Summarization**: Get concise summaries of complex deadline requirements
 - **Ultra-Concise Title Enhancement**: Batch processes all deadline titles in a single API call for maximum efficiency
 
-### 💬 Interactive Commands
+### 💬 Simple Commands
 
-<!-- Chat functionality has been removed -->
-
-#### Simplified Interface (Default)
+#### Main Commands
 - `/tim [query]` - Main command for all deadline interactions
   - No query: Shows upcoming deadlines
   - With query: Natural language search (e.g., "housing deadlines", "what's due this week?")
 - `/urgent` - Show urgent deadlines (next 3 days)
 - `/setup` - One-click setup with smart defaults
 
-#### Traditional Interface (Optional)
-Set `USE_SIMPLIFIED_INTERFACE=false` in `.env` to use detailed commands:
-- `/deadlines list [category] [month]` - List all or filtered deadlines
-- `/deadlines search <query>` - Search deadlines with natural language
-- `/deadlines next [days]` - Show deadlines in the next X days (default: 7)
-- `/deadlines remind <deadline_id> <time>` - Set personal reminder
-- `/deadlines help` - Show detailed help and FAQ
-- `/timezone set <timezone>` - Set your timezone for accurate deadline times
-- `/preferences` - Manage notification preferences
+#### Chat Functionality
+- **Natural Language Chat**: Just mention the bot or ask about deadlines in any channel where it's enabled
+- **Smart Responses**: The bot understands context and provides helpful deadline information
 
 #### Admin Commands (Server Administrators Only)
+- `/admin reminderchannel` - Set the current channel for reminders and weekly digest
+- `/admin setrole <role>` - Set the role to ping for reminders and digest
+- `/admin testreminder` - Test the reminder system in current channel
+- `/admin testdigest` - Test the weekly digest in current channel
 - `/admin scrape` - Manually trigger deadline scraping from MIT website
-- `/admin cleanup` - Clean up old deadlines and find potential duplicates
-- `/admin mergedeadlines <keep_id> <remove_id>` - Merge duplicate deadlines
-- `/admin adddeadline` - Add a custom deadline to the database
-- `/admin reminderchannel` - Set the current channel for daily reminders
-- `/admin status` - Show detailed bot status and statistics
+- `/admin status` - Show bot status and statistics
 
 ### 📊 Dashboard & Analytics
 - **Progress Tracking**: Visual progress bars for multi-step deadlines
@@ -88,55 +74,43 @@ Set `USE_SIMPLIFIED_INTERFACE=false` in `.env` to use detailed commands:
 - **Task Scheduling**: Built-in Hikari-Arc loops for periodic tasks
 - **Configuration**: python-dotenv for environment management
 
-## 📋 Installation & Setup
+## 📋 Simple Setup
 
-### Prerequisites
+### What You Need
 - Python 3.9+
-- Discord Bot Token with appropriate permissions
-- Google AI Studio API Key
+- Discord Bot Token ([Get one here](https://discord.com/developers/applications))
+- Google AI Studio API Key (optional, for chat features)
 
-### Required Discord Permissions
-- `bot` (Essential for bot functionality)
-- `applications.commands` (Required for slash commands)
-- `guilds` (Read server information)
-- `guilds.members.read` (Read member information for personalization)
-- `messages.read` (Read messages in channels)
+### 5-Minute Setup
 
-### Installation Steps
-
-1. **Clone and Install Dependencies**
+1. **Install**
 ```bash
 git clone <repository-url>
 cd "Sir Tim the Timely"
 pip install -r requirements.txt
 ```
 
-2. **Environment Configuration**
+2. **Configure**
 ```bash
 cp .env.example .env
-# Edit .env with your tokens:
-# TOKEN=your_discord_bot_token
-# GEMINI_API_KEY=your_google_ai_studio_api_key
-# HUGGINGFACE_API_TOKEN=your_huggingface_api_token
-# USE_SIMPLIFIED_INTERFACE=true  # Recommended for most users
+# Edit .env and add your Discord bot token:
+# TOKEN=your_discord_bot_token_here
 ```
 
-3. **Database Setup**
+3. **Run**
 ```bash
 python setup_database.py
-```
-
-4. **Install Ollama & the Phi-2 Model**
-First, install Ollama by following the instructions at https://ollama.com/download
-Then run:
-```bash
-python install_model.py
-```
-
-5. **Run the Bot**
-```bash
 python main.py
 ```
+
+4. **Setup in Discord**
+```
+/admin reminderchannel    # Set reminder channel
+/admin setrole @YourRole  # Set role to ping (optional)
+/admin testdigest         # Test it works
+```
+
+**That's it!** See [SIMPLE_SETUP.md](SIMPLE_SETUP.md) for detailed guide.
 
 ## 🎯 Target Users
 
