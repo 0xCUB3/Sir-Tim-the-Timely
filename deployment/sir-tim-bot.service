@@ -5,20 +5,23 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=pi
-Group=pi
-WorkingDirectory=/home/pi/Sir-Tim-the-Timely
-ExecStart=/usr/bin/python3 /home/pi/Sir-Tim-the-Timely/main.py
+User=skula
+Group=skula
+WorkingDirectory=/home/skula/Sir-Tim-the-Timely
+ExecStart=/usr/bin/python3 /home/skula/Sir-Tim-the-Timely/main.py
 Restart=always
 RestartSec=10
+
+# Enhanced logging configuration
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=sir-tim-bot
 
 # Environment variables (you'll need to set these)
 Environment=TOKEN=your_discord_token_here
 Environment=GEMINI_API_KEY=your_gemini_api_key_here
-Environment=DATABASE_PATH=/home/pi/Sir-Tim-the-Timely/data/deadlines.db
-Environment=LOG_LEVEL=INFO
+Environment=DATABASE_PATH=/home/skula/Sir-Tim-the-Timely/data/deadlines.db
+Environment=LOG_LEVEL=DEBUG
 Environment=USE_SIMPLIFIED_INTERFACE=true
 Environment=DEFAULT_TIMEZONE=US/Eastern
 
@@ -27,7 +30,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/home/pi/Sir-Tim-the-Timely
+ReadWritePaths=/home/skula/Sir-Tim-the-Timely
 
 [Install]
 WantedBy=default.target

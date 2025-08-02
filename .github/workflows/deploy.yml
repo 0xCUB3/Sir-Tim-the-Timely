@@ -61,54 +61,124 @@ jobs:
         password: ${{ secrets.PI_PASSWORD }}
         port: ${{ secrets.PI_PORT || 22 }}
         script: |
-          # Navigate to the bot directory
-          cd ${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}
+          set -e  # Exit on any error
           
-          # Stop the bot service if it's running
+          echo "=================================================="
+          echo "🚀 STARTING SIR TIM DEPLOYMENT"
+          echo "Timestamp: $(date)"
+          echo "User: $(whoami)"
+          echo "Working Directory: $(pwd)"
+          echo "=================================================="
+          
+          # Step 1: Navigate to bot directory
+          echo ""
+          echo "📁 STEP 1: Navigating to bot directory..."
+          BOT_DIR="${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}"
+          echo "Target directory: $BOT_DIR"
+          cd "$BOT_DIR"
+          echo "✅ Successfully navigated to bot directory"
+          
+          # Step 2: Check current service status
+          echo ""
+          echo "🔍 STEP 2: Checking current service status..."
           if systemctl --user is-active --quiet sir-tim-bot; then
-            echo "Stopping Sir Tim bot service..."
+            echo "🛑 Sir Tim bot service is currently running"
+            echo "Stopping service..."
             systemctl --user stop sir-tim-bot
+            echo "✅ Service stopped successfully"
+          else
+            echo "ℹ️  Sir Tim bot service is not running"
           fi
           
-          # Backup current version
-          if [ -d "backup" ]; then rm -rf backup; fi
+          # Step 3: Create backup
+          echo ""
+          echo "💾 STEP 3: Creating backup of current version..."
+          if [ -d "backup" ]; then 
+            echo "Removing old backup..."
+            rm -rf backup
+          fi
           mkdir -p backup
-          cp -r src bot.py main.py requirements.txt backup/ 2>/dev/null || true
+          echo "Backing up current files..."
+          cp -r src bot.py main.py requirements.txt backup/ 2>/dev/null || echo "Some files not found, continuing..."
+          echo "✅ Backup created successfully"
           
-          # Pull latest changes
-          echo "Pulling latest changes..."
+          # Step 4: Pull latest changes
+          echo ""
+          echo "📥 STEP 4: Pulling latest changes from GitHub..."
+          echo "Current git status:"
+          git status --porcelain
+          echo "Fetching from origin..."
           git fetch origin
+          echo "Resetting to origin/main..."
           git reset --hard origin/main
+          echo "Current commit: $(git rev-parse --short HEAD)"
+          echo "✅ Successfully updated to latest version"
           
-          # Install/update dependencies
-          echo "Installing dependencies..."
-          python3 -m pip install --user -r requirements.txt
+          # Step 5: Install dependencies
+          echo ""
+          echo "📦 STEP 5: Installing/updating dependencies..."
+          echo "Installing Python packages..."
+          python3 -m pip install --user -r requirements.txt --upgrade
+          echo "✅ Dependencies installed successfully"
           
-          # Run database migrations if needed
-          echo "Checking database..."
+          # Step 6: Database check
+          echo ""
+          echo "🗃️  STEP 6: Checking database..."
           python3 -c "
           import os
           import asyncio
           from src.database import DatabaseManager
+          
           async def migrate():
+              print('Initializing database connection...')
               db = DatabaseManager('./data/deadlines.db')
               await db.initialize()
+              print('Database initialized successfully')
               await db.close()
+              print('Database connection closed')
+          
           asyncio.run(migrate())
-          " || echo "Database check completed"
+          " && echo "✅ Database check completed successfully" || echo "⚠️  Database check completed with warnings"
           
-          # Restart the bot service
-          echo "Starting Sir Tim bot service..."
+          # Step 7: Start service
+          echo ""
+          echo "🚀 STEP 7: Starting Sir Tim bot service..."
           systemctl --user start sir-tim-bot
+          echo "Service start command issued, waiting for startup..."
+          sleep 3
           
-          # Check if service started successfully
-          sleep 5
+          # Step 8: Verify deployment
+          echo ""
+          echo "✅ STEP 8: Verifying deployment..."
           if systemctl --user is-active --quiet sir-tim-bot; then
-            echo "✅ Sir Tim deployment successful!"
-            systemctl --user status sir-tim-bot --no-pager
+            echo "🎉 SUCCESS! Sir Tim deployment completed successfully!"
+            echo ""
+            echo "Service status:"
+            systemctl --user status sir-tim-bot --no-pager -l
+            echo ""
+            echo "Recent logs:"
+            journalctl --user -u sir-tim-bot --no-pager -n 10
           else
-            echo "❌ Service failed to start, rolling back..."
-            cp -r backup/* . 2>/dev/null || true
+            echo "❌ FAILURE! Service failed to start"
+            echo ""
+            echo "Service status:"
+            systemctl --user status sir-tim-bot --no-pager -l
+            echo ""
+            echo "Recent error logs:"
+            journalctl --user -u sir-tim-bot --no-pager -n 20
+            echo ""
+            echo "🔄 Rolling back to previous version..."
+            cp -r backup/* . 2>/dev/null || echo "Backup restore failed"
             systemctl --user start sir-tim-bot
+            echo "Rollback completed"
             exit 1
           fi
+          
+          echo ""
+          echo "=================================================="
+          echo "🎯 DEPLOYMENT SUMMARY"
+          echo "Status: SUCCESS ✅"
+          echo "Timestamp: $(date)"
+          echo "Commit: $(git rev-parse --short HEAD)"
+          echo "Service: RUNNING 🟢"
+          echo "=================================================="
