@@ -1,49 +1,32 @@
-        llm_handler = ctx.client.get_type_dependency(GeminiChatHandler)
-        
-        # Set the current channel as the chat channel
-        await llm_handler.set_chat_channel(ctx.guild_id, ctx.channel_id)
-        
-        embed = hikari.Embed(
+"""
+Chat Commands for Sir Tim the Tim        embed = hikari.Embed(
             title="✅ Chat Channel Set",
-            description="Tim will now randomly respond in this channel with friendly and helpful wisdom.",
+            description="Tim will now randomly respond in this channel with snarky but helpful wisdom.",
             color=0x00FF00
         )
         
         embed.add_field(
             name="How it works",
             value=(
-                "• Tim responds randomly (~70% chance)\n"
-                "• Higher chance if mentioned or when asking questions\n"
-                "• Has a short cooldown to prevent spam\n"
-                "• Friendly, wise, and genuinely helpful"
+                "• Tim responds randomly (~25% chance)\n"
+                "• Higher chance if mentioned or deadline keywords used\n"
+                "• Has a 5-second cooldown to prevent spam\n"
+                "• Snarky but secretly helpful and wise"
             ),
-    if not ctx.guild_id:
-        await ctx.respond("This command can only be used in a server.", flags=hikari.MessageFlag.EPHEMERAL)
-        return
-    
-    try:
-        llm_handler = ctx.client.get_type_dependency(GeminiChatHandler)
-        
-        # Remove the chat channel
-        await llm_handler.remove_chat_channel(ctx.guild_id)
-        
-        embed = hikari.Embed(
-            title="🔇 Chat Disabled",
-            description="Tim will no longer respond in channels on this server.",
-            color=0xFF9900
-        )
-        
-        embed.add_field(
-            name="Re-enable anytime",
-            value="Use `/setchat` in any channel to re-enable Tim's chat responses.",
             inline=False
-        )
-        
-        await ctx.respond(embed=embed)
-        
-    except Exception as e:
-        logger.error(f"Error removing chat channel: {e}")
-        await ctx.respond("Failed to remove chat functionality. Please try again.", flags=hikari.MessageFlag.EPHEMERAL)
+        )r managing Tim's chat functionality in channels.
+"""
+
+import logging
+import hikari
+import arc
+
+from ..gemini_chat_handler import GeminiChatHandler
+
+logger = logging.getLogger("sir_tim.commands.chat")
+
+# Create a plugin for chat commands
+plugin = arc.GatewayPlugin("chat")  
 
 @plugin.include
 @arc.slash_command("chatstatus", "Show Tim's chat status for this server (Admin only)")

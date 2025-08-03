@@ -1,5 +1,47 @@
+"""
+Admin Command Module for Sir Tim the Timely
+
+Implements admin commands for managing the bot and its settings.
+"""
+
+import logging
+from datetime import datetime, timezone
+from typing import Set
+
+import hikari
+import arc
+from hikari.errors import NotFoundError, BadRequestError
+
+from ..database import DatabaseManager
+from ..scraper import MITDeadlineScraper
+from ..reminder_system import ReminderSystem
 from ..gemini_chat_handler import GeminiChatHandler
-# Set chat channel admin command
+
+logger = logging.getLogger("sir_tim.commands.admin")
+
+# Create a plugin for admin commands
+plugin = arc.GatewayPlugin("admin")
+
+# Admin role whitelist - stores role IDs that can use admin commands
+admin_role_whitelist: Set[int] = set()
+
+def is_admin_authorized(member: hikari.Member) -> bool:
+    """Check if a member is authorized to use admin commands."""
+    if not member:
+        return False
+    
+    # Check if user has administrator permissions
+    if member.permissions.ADMINISTRATOR:
+        return True
+    
+    # Check if user has any whitelisted roles
+    member_role_ids = {role.id for role in member.get_roles()}
+    return bool(admin_role_whitelist.intersection(member_role_ids))
+
+# Define admin command group
+admin = plugin.include_slash_group("admin", "Administrative commands for bot management")
+
+from ..gemini_chat_handler import GeminiChatHandler
 @admin.include
 @arc.slash_subcommand("setchat", "Set current channel for Tim to chat in (Admin only)")
 async def admin_set_chat_channel(ctx: arc.GatewayContext) -> None:
@@ -72,48 +114,6 @@ async def admin_remove_chat_channel(ctx: arc.GatewayContext) -> None:
         logger.error(f"Error removing chat channel: {e}")
         await ctx.respond("Failed to remove chat functionality. Please try again.", flags=hikari.MessageFlag.EPHEMERAL)
 
-"""
-Admin Command Module for Sir Tim the Timely
-
-Implements admin commands for managing the bot and its settings.
-"""
-
-import logging
-from datetime import datetime, timezone
-from typing import Set
-
-import hikari
-import arc
-from hikari.errors import NotFoundError, BadRequestError
-
-from ..database import DatabaseManager
-from ..scraper import MITDeadlineScraper
-from ..reminder_system import ReminderSystem
-from ..gemini_chat_handler import GeminiChatHandler
-
-logger = logging.getLogger("sir_tim.commands.admin")
-
-# Create a plugin for admin commands
-plugin = arc.GatewayPlugin("admin")
-
-# Admin role whitelist - stores role IDs that can use admin commands
-admin_role_whitelist: Set[int] = set()
-
-def is_admin_authorized(member: hikari.Member) -> bool:
-    """Check if a member is authorized to use admin commands."""
-    if not member:
-        return False
-    
-    # Check if user has administrator permissions
-    if member.permissions.ADMINISTRATOR:
-        return True
-    
-    # Check if user has any whitelisted roles
-    member_role_ids = {role.id for role in member.get_roles()}
-    return bool(admin_role_whitelist.intersection(member_role_ids))
-
-# Define admin command group
-admin = plugin.include_slash_group("admin", "Administrative commands for bot management")
 
 @admin.include
 @arc.slash_subcommand("addrole", "Add a role to the admin whitelist")
