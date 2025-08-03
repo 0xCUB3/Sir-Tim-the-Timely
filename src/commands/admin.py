@@ -1,43 +1,77 @@
+from ..gemini_chat_handler import GeminiChatHandler
+# Set chat channel admin command
 @admin.include
-@arc.slash_subcommand("testreminddm", "Test sending a DM reminder for a deadline to yourself immediately")
-async def test_remind_dm(
-    ctx: arc.GatewayContext,
-    deadline_id: arc.Option[int, arc.IntParams("ID of the deadline to test DM for")]
-) -> None:
-    """Admin-only: Test sending a DM reminder for a deadline immediately."""
-    # Check authorization
+@arc.slash_subcommand("setchat", "Set current channel for Tim to chat in (Admin only)")
+async def admin_set_chat_channel(ctx: arc.GatewayContext) -> None:
+    """Set the current channel for Tim to respond in (admin only)."""
     if not is_admin_authorized(ctx.member):
-        await ctx.respond("❌ You don't have permission to use admin commands.", flags=hikari.MessageFlag.EPHEMERAL)
+        await ctx.respond("This command can only be used by server administrators or whitelisted admin roles.", flags=hikari.MessageFlag.EPHEMERAL)
         return
-
-    db_manager = ctx.client.get_type_dependency(DatabaseManager)
-    deadlines = await db_manager.get_deadlines()
-    deadline = next((d for d in deadlines if d['id'] == deadline_id), None)
-
-    if not deadline:
-        await ctx.respond("❌ Deadline not found. Please check the ID and try again.", flags=hikari.MessageFlag.EPHEMERAL)
+    if not ctx.guild_id:
+        await ctx.respond("This command can only be used in a server.", flags=hikari.MessageFlag.EPHEMERAL)
         return
-
-    # Compose DM embed
-    due_date = deadline.get('due_date')
-    title = deadline.get('title', 'Untitled')
-    desc = deadline.get('description', '')
-    category = deadline.get('category', 'General')
-
-    embed = hikari.Embed(
-        title=f"⏰ Reminder: {title}",
-        description=f"Category: {category}\nDue: {due_date}\n\n{desc}",
-        color=0x00BFFF,
-        timestamp=datetime.now(timezone.utc)
-    )
-    embed.set_footer(text="Sir Tim the Timely • DM Reminder Test")
-
     try:
-        await ctx.rest.create_message(ctx.author.id, embed=embed)
-        await ctx.respond("✅ DM reminder sent! Check your Discord DMs.", flags=hikari.MessageFlag.EPHEMERAL)
+        llm_handler = ctx.client.get_type_dependency(GeminiChatHandler)
+        await llm_handler.set_chat_channel(ctx.guild_id, ctx.channel_id)
+        embed = hikari.Embed(
+            title="✅ Chat Channel Set",
+            description="Tim will now randomly respond in this channel with friendly and helpful wisdom.",
+            color=0x00FF00
+        )
+        embed.add_field(
+            name="How it works",
+            value=(
+                "• Tim responds randomly (~70% chance)\n"
+                "• Higher chance if mentioned or when asking questions\n"
+                "• Has a short cooldown to prevent spam\n"
+                "• Friendly, wise, and genuinely helpful"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="Tips",
+            value=(
+                "• Mention Tim to get his attention\n"
+                "• Ask about deadlines, stress, or MIT stuff\n"
+                "• He's friendly and offers practical advice\n"
+                "• Use `/admin removechat` to disable"
+            ),
+            inline=False
+        )
+        await ctx.respond(embed=embed)
     except Exception as e:
-        logger.error(f"Error sending DM reminder: {e}")
-        await ctx.respond("❌ Failed to send DM. Make sure your DMs are open.", flags=hikari.MessageFlag.EPHEMERAL)
+        logger.error(f"Error setting chat channel: {e}")
+        await ctx.respond("Failed to set chat channel. Please try again.", flags=hikari.MessageFlag.EPHEMERAL)
+
+# Remove chat channel admin command
+@admin.include
+@arc.slash_subcommand("removechat", "Remove Tim's chat functionality from this server (Admin only)")
+async def admin_remove_chat_channel(ctx: arc.GatewayContext) -> None:
+    """Remove Tim's chat functionality from this server (admin only)."""
+    if not is_admin_authorized(ctx.member):
+        await ctx.respond("This command can only be used by server administrators or whitelisted admin roles.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+    if not ctx.guild_id:
+        await ctx.respond("This command can only be used in a server.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+    try:
+        llm_handler = ctx.client.get_type_dependency(GeminiChatHandler)
+        await llm_handler.remove_chat_channel(ctx.guild_id)
+        embed = hikari.Embed(
+            title="❌ Chat Disabled",
+            description="Tim's chat functionality has been disabled for this server.",
+            color=0xFF0000
+        )
+        embed.add_field(
+            name="How to re-enable",
+            value="Use `/admin setchat` in any channel to re-enable Tim's chat responses.",
+            inline=False
+        )
+        await ctx.respond(embed=embed)
+    except Exception as e:
+        logger.error(f"Error removing chat channel: {e}")
+        await ctx.respond("Failed to remove chat functionality. Please try again.", flags=hikari.MessageFlag.EPHEMERAL)
+
 """
 Admin Command Module for Sir Tim the Timely
 
@@ -323,6 +357,79 @@ async def test_reminder(ctx: arc.GatewayContext) -> None:
     except Exception as e:
         logger.error(f"Error sending test reminder: {e}")
         await ctx.respond(f"❌ Error: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
+
+@admin.include
+@arc.slash_subcommand("testreminddm", "Test sending a DM reminder for a deadline to yourself immediately")
+async def test_remind_dm(
+    ctx: arc.GatewayContext,
+    deadline_id: arc.Option[int, arc.IntParams("ID of the deadline to test DM for")]
+) -> None:
+    """Admin-only: Test sending a DM reminder for a deadline immediately."""
+    # Check authorization
+    if not is_admin_authorized(ctx.member):
+        await ctx.respond("❌ You don't have permission to use admin commands.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+
+    db_manager = ctx.client.get_type_dependency(DatabaseManager)
+    deadlines = await db_manager.get_deadlines()
+    deadline = next((d for d in deadlines if d['id'] == deadline_id), None)
+
+    if not deadline:
+        await ctx.respond("❌ Deadline not found. Please check the ID and try again.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+
+    # Compose DM embed with 'in X days/hours' format
+    title = deadline.get('title', 'Untitled')
+    desc = deadline.get('description', '')
+    category = deadline.get('category', 'General')
+    due_date_raw = deadline.get('due_date')
+    due_dt = None
+    time_left_str = "Unknown"
+    if due_date_raw:
+        try:
+            from datetime import datetime, timezone
+            if isinstance(due_date_raw, str):
+                due_dt = datetime.fromisoformat(due_date_raw.replace('Z', '+00:00'))
+            else:
+                due_dt = due_date_raw
+            now = datetime.now(timezone.utc)
+            delta = due_dt - now
+            days = delta.days
+            hours = delta.seconds // 3600
+            minutes = (delta.seconds % 3600) // 60
+            if days > 0:
+                time_left_str = f"in {days} day{'s' if days != 1 else ''}"
+            elif hours > 0:
+                time_left_str = f"in {hours} hour{'s' if hours != 1 else ''}"
+            elif minutes > 0:
+                time_left_str = f"in {minutes} minute{'s' if minutes != 1 else ''}"
+            elif delta.total_seconds() > 0:
+                time_left_str = "soon"
+            else:
+                time_left_str = "(already passed)"
+        except Exception:
+            pass
+
+    # Format Discord timestamp markdown if possible
+    timestamp_str = due_date_raw
+    if due_dt:
+        unix_ts = int(due_dt.timestamp())
+        timestamp_str = f"<t:{unix_ts}:F> (<t:{unix_ts}:R>)"
+
+    embed = hikari.Embed(
+        title=f"⏰ Reminder: {title}",
+        description=f"Category: {category}\nDue: {timestamp_str}\n\n{desc}",
+        color=0x00BFFF
+    )
+    embed.set_footer(text="Sir Tim the Timely • DM Reminder Test")
+
+    try:
+        dm_channel = await ctx.client.rest.create_dm_channel(ctx.author.id)
+        await ctx.client.rest.create_message(dm_channel.id, embed=embed)
+        await ctx.respond("✅ DM reminder sent! Check your Discord DMs.", flags=hikari.MessageFlag.EPHEMERAL)
+    except Exception as e:
+        logger.error(f"Error sending DM reminder: {e}")
+        await ctx.respond("❌ Failed to send DM. Make sure your DMs are open.", flags=hikari.MessageFlag.EPHEMERAL)
 
 @admin.include
 @arc.slash_subcommand("status", "Show bot status information")

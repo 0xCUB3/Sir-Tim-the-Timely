@@ -1,48 +1,3 @@
-"""
-Chat Commands for Sir Tim the Tim        embed = hikari.Embed(
-            title="✅ Chat Channel Set",
-            description="Tim will now randomly respond in this channel with snarky but helpful wisdom.",
-            color=0x00FF00
-        )
-        
-        embed.add_field(
-            name="How it works",
-            value=(
-                "• Tim responds randomly (~25% chance)\n"
-                "• Higher chance if mentioned or deadline keywords used\n"
-                "• Has a 5-second cooldown to prevent spam\n"
-                "• Snarky but secretly helpful and wise"
-            ),
-            inline=False
-        )r managing Tim's chat functionality in channels.
-"""
-
-import logging
-import hikari
-import arc
-
-from ..gemini_chat_handler import GeminiChatHandler
-
-logger = logging.getLogger("sir_tim.commands.chat")
-
-# Create a plugin for chat commands
-plugin = arc.GatewayPlugin("chat")
-
-@plugin.include
-@arc.slash_command("setchat", "Set current channel for Tim to chat in (Admin only)")
-async def set_chat_channel(ctx: arc.GatewayContext) -> None:
-    """Set the current channel for Tim to respond in."""
-    # Only allow server admins
-    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
-        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
-        return
-    
-    # Must be used in a guild
-    if not ctx.guild_id:
-        await ctx.respond("This command can only be used in a server.", flags=hikari.MessageFlag.EPHEMERAL)
-        return
-    
-    try:
         llm_handler = ctx.client.get_type_dependency(GeminiChatHandler)
         
         # Set the current channel as the chat channel
@@ -62,36 +17,6 @@ async def set_chat_channel(ctx: arc.GatewayContext) -> None:
                 "• Has a short cooldown to prevent spam\n"
                 "• Friendly, wise, and genuinely helpful"
             ),
-            inline=False
-        )
-        
-        embed.add_field(
-            name="Tips",
-            value=(
-                "• Mention Tim to get his attention\n"
-                "• Ask about deadlines, stress, or MIT stuff\n"
-                "• He's friendly and offers practical advice\n"
-                "• Use `/removechat` to disable"
-            ),
-            inline=False
-        )
-        
-        await ctx.respond(embed=embed)
-        
-    except Exception as e:
-        logger.error(f"Error setting chat channel: {e}")
-        await ctx.respond("Failed to set chat channel. Please try again.", flags=hikari.MessageFlag.EPHEMERAL)
-
-@plugin.include
-@arc.slash_command("removechat", "Remove Tim's chat functionality from this server (Admin only)")
-async def remove_chat_channel(ctx: arc.GatewayContext) -> None:
-    """Remove Tim's chat functionality from this server."""
-    # Only allow server admins
-    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
-        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
-        return
-    
-    # Must be used in a guild
     if not ctx.guild_id:
         await ctx.respond("This command can only be used in a server.", flags=hikari.MessageFlag.EPHEMERAL)
         return

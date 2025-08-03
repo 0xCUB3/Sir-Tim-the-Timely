@@ -447,29 +447,47 @@ class MITDeadlineScraper:
         return hashlib.md5(content.encode('utf-8')).hexdigest()
     
     async def _update_deadlines(self, deadlines: List[Dict]):
-        """Update the database with new deadlines, preserving AI enhancements where possible."""
-        # Clear existing deadlines and insert new ones
-        async with self.db_manager._connection.cursor() as cursor:
-            await cursor.execute("DELETE FROM deadlines")
-            await self.db_manager._connection.commit()
-        
+        """Update the database with new deadlines, preserving IDs and only updating/inserting as needed."""
+        # Get all existing deadlines (by content_hash)
+        existing_deadlines = await self.db_manager.get_deadlines(active_only=False)
+        existing_by_hash = {d.get('content_hash'): d for d in existing_deadlines if d.get('content_hash')}
+
         for deadline_data in deadlines:
             try:
-                await self.db_manager.add_deadline(
-                    raw_title=deadline_data['raw_title'],
-                    title=deadline_data['title'],
-                    description=deadline_data.get('description'),
-                    start_date=deadline_data.get('start_date'),
-                    due_date=deadline_data['due_date'],
-                    category=deadline_data.get('category'),
-                    url=deadline_data.get('url'),
-                    is_critical=deadline_data.get('is_critical', False),
-                    is_event=deadline_data.get('is_event', False),
-                    ai_enhanced=deadline_data.get('ai_enhanced', False),
-                    content_hash=deadline_data.get('content_hash')
-                )
+                content_hash = deadline_data.get('content_hash')
+                existing = existing_by_hash.get(content_hash)
+                if existing:
+                    # Update existing deadline if any field changed
+                    await self.db_manager.update_deadline(
+                        existing['id'],
+                        title=deadline_data['title'],
+                        description=deadline_data.get('description'),
+                        start_date=deadline_data.get('start_date'),
+                        due_date=deadline_data['due_date'],
+                        category=deadline_data.get('category'),
+                        url=deadline_data.get('url'),
+                        is_critical=deadline_data.get('is_critical', False),
+                        is_event=deadline_data.get('is_event', False),
+                        ai_enhanced=deadline_data.get('ai_enhanced', False),
+                        content_hash=content_hash
+                    )
+                else:
+                    # Insert new deadline
+                    await self.db_manager.add_deadline(
+                        raw_title=deadline_data['raw_title'],
+                        title=deadline_data['title'],
+                        description=deadline_data.get('description'),
+                        start_date=deadline_data.get('start_date'),
+                        due_date=deadline_data['due_date'],
+                        category=deadline_data.get('category'),
+                        url=deadline_data.get('url'),
+                        is_critical=deadline_data.get('is_critical', False),
+                        is_event=deadline_data.get('is_event', False),
+                        ai_enhanced=deadline_data.get('ai_enhanced', False),
+                        content_hash=content_hash
+                    )
             except Exception as e:
-                logger.error(f"Failed to insert deadline {deadline_data.get('title', 'Unknown')}: {e}")
+                logger.error(f"Failed to upsert deadline {deadline_data.get('title', 'Unknown')}: {e}")
     
     async def close(self):
         """Close the HTTP session."""
