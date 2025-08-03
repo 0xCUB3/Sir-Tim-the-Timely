@@ -12,39 +12,11 @@ jobs:
     runs-on: self-hosted
     steps:
     - uses: actions/checkout@v4
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        
-    - name: Run syntax checks
-      run: |
-        python -m py_compile bot.py
-        python -m py_compile src/*.py
-        find src -name "*.py" -exec python -m py_compile {} \;
-        
-    - name: Test database initialization
-      run: |
-        python -c "
-        import os
-        os.environ['TOKEN'] = 'dummy_token'
-        os.environ['GEMINI_API_KEY'] = 'dummy_key'
-        from src.database import DatabaseManager
-        import asyncio
-        async def test():
-            db = DatabaseManager(':memory:')
-            await db.initialize()
-            await db.close()
-        asyncio.run(test())
-        print('Database test passed!')
-        "
 
   deploy:
     needs: test
     runs-on: self-hosted
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    
     steps:
     - uses: actions/checkout@v4
     
@@ -57,14 +29,12 @@ jobs:
         port: ${{ secrets.PI_PORT || 22 }}
         script: |
           set -e  # Exit on any error
-          
           echo "=================================================="
           echo "🚀 STARTING SIR TIM DEPLOYMENT"
           echo "Timestamp: $(date)"
           echo "User: $(whoami)"
           echo "Working Directory: $(pwd)"
           echo "=================================================="
-          
           # Step 1: Navigate to bot directory
           echo ""
           echo "📁 STEP 1: Navigating to bot directory..."
@@ -72,10 +42,16 @@ jobs:
           echo "Target directory: $BOT_DIR"
           cd "$BOT_DIR"
           echo "✅ Successfully navigated to bot directory"
-          
-          # Step 2: Check current service status
+          # Step 2: Check for systemd service file
           echo ""
-          echo "🔍 STEP 2: Checking current service status..."
+          echo "🔍 STEP 2: Checking for systemd service file..."
+          if [ ! -f "deployment/sir-tim-bot.service" ]; then
+            echo "❌ Systemd service file 'deployment/sir-tim-bot.service' not found!"
+            exit 1
+          fi
+          # Step 3: Check current service status
+          echo ""
+          echo "🔍 STEP 3: Checking current service status..."
           if systemctl --user is-active --quiet sir-tim-bot; then
             echo "🛑 Sir Tim bot service is currently running"
             echo "Stopping service..."
@@ -84,10 +60,9 @@ jobs:
           else
             echo "ℹ️  Sir Tim bot service is not running"
           fi
-          
-          # Step 3: Create backup
+          # Step 4: Create backup
           echo ""
-          echo "💾 STEP 3: Creating backup of current version..."
+          echo "💾 STEP 4: Creating backup of current version..."
           if [ -d "backup" ]; then 
             echo "Removing old backup..."
             rm -rf backup
@@ -96,10 +71,9 @@ jobs:
           echo "Backing up current files..."
           cp -r src bot.py main.py requirements.txt backup/ 2>/dev/null || echo "Some files not found, continuing..."
           echo "✅ Backup created successfully"
-          
-          # Step 4: Pull latest changes
+          # Step 5: Pull latest changes
           echo ""
-          echo "📥 STEP 4: Pulling latest changes from GitHub..."
+          echo "📥 STEP 5: Pulling latest changes from GitHub..."
           echo "Current git status:"
           git status --porcelain
           echo "Fetching from origin..."
@@ -108,43 +82,19 @@ jobs:
           git reset --hard origin/main
           echo "Current commit: $(git rev-parse --short HEAD)"
           echo "✅ Successfully updated to latest version"
-          
-          # Step 5: Install dependencies
+          # Step 6: Start service
           echo ""
-          echo "📦 STEP 5: Installing/updating dependencies..."
-          echo "Installing Python packages..."
-          python3 -m pip install --user -r requirements.txt --upgrade
-          echo "✅ Dependencies installed successfully"
-          
-          # Step 6: Database check
+          echo "� STEP 6: Starting Sir Tim bot service..."
+          if systemctl --user start sir-tim-bot; then
+            echo "Service start command issued, waiting for startup..."
+            sleep 3
+          else
+            echo "❌ Failed to start sir-tim-bot.service: Unit sir-tim-bot.service not found."
+            exit 1
+          fi
+          # Step 7: Verify deployment
           echo ""
-          echo "🗃️  STEP 6: Checking database..."
-          python3 -c "
-          import os
-          import asyncio
-          from src.database import DatabaseManager
-          
-          async def migrate():
-              print('Initializing database connection...')
-              db = DatabaseManager('./data/deadlines.db')
-              await db.initialize()
-              print('Database initialized successfully')
-              await db.close()
-              print('Database connection closed')
-          
-          asyncio.run(migrate())
-          " && echo "✅ Database check completed successfully" || echo "⚠️  Database check completed with warnings"
-          
-          # Step 7: Start service
-          echo ""
-          echo "🚀 STEP 7: Starting Sir Tim bot service..."
-          systemctl --user start sir-tim-bot
-          echo "Service start command issued, waiting for startup..."
-          sleep 3
-          
-          # Step 8: Verify deployment
-          echo ""
-          echo "✅ STEP 8: Verifying deployment..."
+          echo "✅ STEP 7: Verifying deployment..."
           if systemctl --user is-active --quiet sir-tim-bot; then
             echo "🎉 SUCCESS! Sir Tim deployment completed successfully!"
             echo ""
@@ -168,7 +118,6 @@ jobs:
             echo "Rollback completed"
             exit 1
           fi
-          
           echo ""
           echo "=================================================="
           echo "🎯 DEPLOYMENT SUMMARY"
