@@ -26,6 +26,11 @@ jobs:
         python3 -m pip install --upgrade pip
         python3 -m pip install -r requirements.txt --break-system-packages
     
+    - name: Update local git repository
+      run: |
+        cd ${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}
+        git pull
+
     - name: Install or reload systemd service for Sir Tim bot
       run: |
         SERVICE_PATH="/etc/systemd/system/sir-tim-bot.service"
@@ -45,5 +50,4 @@ jobs:
 
     - name: Show Logs
       run: |
-        cd ${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}
-        tail -n 50 bot.log
+        sudo journalctl -u sir-tim-bot.service -n 50 --no-pager
