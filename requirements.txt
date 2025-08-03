@@ -25,6 +25,10 @@ pytz>=2024.1
 # Utilities
 typing-extensions>=4.8.0
 
+# System Stats
+psutil>=5.9.0
+py-cpuinfo>=9.0.0
+
 # Development Dependencies (optional)
 # pytest>=7.4.0
 # pytest-asyncio>=0.21.0

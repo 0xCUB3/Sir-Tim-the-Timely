@@ -131,6 +131,7 @@ class SirTimBot:
                 "src.commands.admin",                # /admin commands
                 "src.commands.utils",                # utility commands
                 "src.commands.chat",                 # /setchat, /removechat, /chatstatus
+                "src.commands.sysstats",             # /sysstats server stats command
             ]
             logger.info("Loading all command interfaces")
             
