@@ -24,105 +24,11 @@ jobs:
       run: |
         cd ${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}
         python3 -m pip install --upgrade pip
-        python3 -m pip install -r requirements.txt
+        python3 -m pip install -r requirements.txt --break-system-packages
     
-    - name: Deploy Sir Tim bot
+    - name: Start Sir Tim bot (background)
       run: |
-        set -e  # Exit on any error
-        echo "=================================================="
-        echo "🚀 STARTING SIR TIM DEPLOYMENT"
-        echo "Timestamp: $(date)"
-        echo "User: $(whoami)"
-        echo "Working Directory: $(pwd)"
-        echo "=================================================="
-        # Step 1: Navigate to bot directory
-        echo ""
-        echo "📁 STEP 1: Navigating to bot directory..."
-        BOT_DIR="${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}"
-        echo "Target directory: $BOT_DIR"
-        cd "$BOT_DIR"
-        echo "✅ Successfully navigated to bot directory"
-        # Step 2: Check for systemd service file
-        echo ""
-        echo "🔍 STEP 2: Checking for systemd service file..."
-        if [ ! -f "deployment/sir-tim-bot.service" ]; then
-          echo "❌ Systemd service file 'deployment/sir-tim-bot.service' not found!"
-          exit 1
-        fi
-        # Step 3: Check current service status
-        echo ""
-        echo "🔍 STEP 3: Checking current service status..."
-        if systemctl is-active --quiet sir-tim-bot; then
-          echo "🛑 Sir Tim bot service is currently running"
-          echo "Stopping service..."
-          sudo systemctl stop sir-tim-bot
-          echo "✅ Service stopped successfully"
-        else
-          echo "ℹ️  Sir Tim bot service is not running"
-        fi
-        # Step 4: Create backup
-        echo ""
-        echo "💾 STEP 4: Creating backup of current version..."
-        if [ -d "backup" ]; then 
-          echo "Removing old backup..."
-          rm -rf backup
-        fi
-        mkdir -p backup
-        echo "Backing up current files..."
-        cp -r src bot.py main.py requirements.txt backup/ 2>/dev/null || echo "Some files not found, continuing..."
-        echo "✅ Backup created successfully"
-        # Step 5: Pull latest changes
-        echo ""
-        echo "📥 STEP 5: Pulling latest changes from GitHub..."
-        echo "Current git status:"
-        git status --porcelain
-        echo "Fetching from origin..."
-        git fetch origin
-        echo "Resetting to origin/main..."
-        git reset --hard origin/main
-        echo "Current commit: $(git rev-parse --short HEAD)"
-        echo "✅ Successfully updated to latest version"
-        # Step 6: Start service
-        echo ""
-        echo "🚀 STEP 6: Starting Sir Tim bot service..."
-        if sudo systemctl start sir-tim-bot; then
-          echo "Service start command issued, waiting for startup..."
-          sleep 3
-        else
-          echo "❌ Failed to start sir-tim-bot.service: Unit sir-tim-bot.service not found."
-          exit 1
-        fi
-        # Step 7: Verify deployment
-        echo ""
-        echo "✅ STEP 7: Verifying deployment..."
-        if systemctl is-active --quiet sir-tim-bot; then
-          echo "🎉 SUCCESS! Sir Tim deployment completed successfully!"
-          echo ""
-          echo "Service status:"
-          sudo systemctl status sir-tim-bot --no-pager -l
-          echo ""
-          echo "Recent logs:"
-          sudo journalctl -u sir-tim-bot --no-pager -n 10
-        else
-          echo "❌ FAILURE! Service failed to start"
-          echo ""
-          echo "Service status:"
-          sudo systemctl status sir-tim-bot --no-pager -l
-          echo ""
-          echo "Recent error logs:"
-          sudo journalctl -u sir-tim-bot --no-pager -n 20
-          echo ""
-          echo "🔄 Rolling back to previous version..."
-          cp -r backup/* . 2>/dev/null || echo "Backup restore failed"
-          sudo systemctl start sir-tim-bot
-          echo "Rollback completed"
-          exit 1
-        fi
-        echo ""
-        echo "=================================================="
-        echo "🎯 DEPLOYMENT SUMMARY"
-        echo "Status: SUCCESS ✅"
-        echo "Timestamp: $(date)"
-        echo "Commit: $(git rev-parse --short HEAD)"
-        echo "Service: RUNNING 🟢"
-        echo "=================================================="
+        cd ${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}
+        pkill -f "python3 main.py" || true
+        nohup python3 main.py > bot.log 2>&1 &
+        echo "Sir Tim bot started"
