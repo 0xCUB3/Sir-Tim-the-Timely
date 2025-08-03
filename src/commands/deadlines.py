@@ -48,19 +48,6 @@ def autodefer(func):
                 pass
     return wrapper
 
-# Custom button and view for "View All Deadlines"
-class ViewAllDeadlinesButton(miru.Button):
-    def __init__(self):
-        super().__init__(
-            style=hikari.ButtonStyle.LINK,
-            label="🌐 View All Deadlines"
-        )
-        self.url = os.getenv("MIT_DEADLINES_URL", "https://firstyear.mit.edu/orientation/countdown-to-campus-before-you-arrive/critical-summer-actions-and-deadlines/")
-
-class ViewAllDeadlinesView(miru.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-        self.add_item(ViewAllDeadlinesButton())
 
 async def safe_defer_and_respond(ctx: arc.GatewayContext, func):
     """Safely defer and execute a function with error handling."""
@@ -110,8 +97,7 @@ async def tim_main(
                     color=0x00FF00,
                     timestamp=datetime.now(timezone.utc)
                 )
-                view = ViewAllDeadlinesView()
-                await ctx.respond(embed=embed, components=view)
+                await ctx.respond(embed=embed)
                 return
             # Regular detailed deadline list
             from ..commands.deadlines import send_deadline_list
@@ -145,8 +131,7 @@ async def tim_main(
                 embed.set_footer(text="💡 Tip: Try '/tim' with no text to see all deadlines")
                 
                 # Add view with button
-                view = ViewAllDeadlinesView()
-                await ctx.respond(embed=embed, components=view)
+                await ctx.respond(embed=embed)
         else:
             # Fallback to keyword search
             results = await db_manager.search_deadlines(query)
@@ -178,8 +163,7 @@ async def urgent_deadlines(ctx: arc.GatewayContext) -> None:
                 value="Use `/tim` to see what's coming up this week.",
                 inline=False
             )
-            view = ViewAllDeadlinesView()
-            await ctx.respond(embed=embed, components=view)
+            await ctx.respond(embed=embed)
             return
         
         await send_smart_deadline_list(ctx, deadlines, "🚨 Urgent Deadlines (Next 3 Days)")
@@ -338,11 +322,9 @@ async def send_smart_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict
         
         pages.append(embed)
     
-    # Send response with "View All Deadlines" button
+    # Send response for single page
     if len(pages) == 1:
-        # Create view with button for single page
-        view = ViewAllDeadlinesView()
-        await ctx.respond(embed=pages[0], components=view)
+        await ctx.respond(embed=pages[0])
     else:
         # Create navigator for multiple pages (without adding incompatible button)
         miru_client = ctx.client.get_type_dependency(miru.Client)
