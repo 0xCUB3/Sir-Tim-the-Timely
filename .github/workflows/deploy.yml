@@ -23,7 +23,9 @@ jobs:
     - name: Set up Python 3.11 venv
       run: |
         cd ${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}
-        python3.11 -m venv venv
+        if [ ! -d "venv" ]; then
+          python3.11 -m venv venv
+        fi
         source venv/bin/activate
         pip install --upgrade pip
         pip install -r requirements.txt

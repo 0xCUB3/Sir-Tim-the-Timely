@@ -13,7 +13,9 @@ jobs:
     - uses: actions/checkout@v4
     - name: Set up Python 3.11 venv
       run: |
-        python3.11 -m venv venv
+        if [ ! -d "venv" ]; then
+          python3.11 -m venv venv
+        fi
         source venv/bin/activate
         pip install --upgrade pip
         pip install -r requirements.txt
