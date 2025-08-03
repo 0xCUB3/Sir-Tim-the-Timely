@@ -69,6 +69,9 @@ class ReminderSystem:
         
         # Check for urgent reminders
         await self._send_urgent_reminders(now)
+        
+        # Check for personal reminders
+        await self._send_personal_reminders()
     
     def _should_send_weekly_digest(self, now: datetime) -> bool:
         """Check if it's time for the weekly digest (Sunday morning)."""
@@ -525,3 +528,81 @@ class ReminderSystem:
             'daily_reminder_time': self.daily_reminder_time,
             'urgent_thresholds': self.urgent_reminder_hours
         }
+    
+    async def _send_personal_reminders(self):
+        """Check for and send personal DM reminders."""
+        try:
+            # Get all pending personal reminders
+            pending_reminders = await self.db_manager.get_pending_personal_reminders()
+            
+            for reminder in pending_reminders:
+                try:
+                    # Get the user
+                    user = self.bot.cache.get_user(reminder['user_id'])
+                    if not user:
+                        # Try to fetch the user if not in cache
+                        user = await self.bot.rest.fetch_user(reminder['user_id'])
+                    
+                    if user:
+                        # Create DM embed
+                        due_date = datetime.fromisoformat(reminder['due_date'].replace('Z', '+00:00'))
+                        
+                        embed = hikari.Embed(
+                            title="🔔 Personal Deadline Reminder",
+                            description=f"**{reminder['title']}** is due in {reminder['hours_before']} hour(s)!",
+                            color=0xFF6B35,
+                            timestamp=datetime.now(timezone.utc)
+                        )
+                        
+                        embed.add_field(
+                            name="📅 Due Date",
+                            value=due_date.strftime("%B %d, %Y at %I:%M %p EST"),
+                            inline=True
+                        )
+                        
+                        if reminder.get('category'):
+                            embed.add_field(
+                                name="📂 Category",
+                                value=reminder['category'],
+                                inline=True
+                            )
+                        
+                        if reminder.get('description'):
+                            description = reminder['description']
+                            if len(description) > 200:
+                                description = description[:197] + "..."
+                            embed.add_field(
+                                name="📝 Details",
+                                value=description,
+                                inline=False
+                            )
+                        
+                        if reminder.get('url') and reminder['url'].strip() and reminder['url'].lower() != 'no url available':
+                            embed.add_field(
+                                name="🔗 Link",
+                                value=f"[More Information]({reminder['url']})",
+                                inline=False
+                            )
+                        
+                        embed.set_footer(text="Sir Tim the Timely • Personal Reminder")
+                        
+                        # Send DM
+                        await user.send(embed=embed)
+                        
+                        # Mark as sent
+                        await self.db_manager.mark_personal_reminder_sent(reminder['id'])
+                        
+                        logger.info(f"Sent personal reminder to user {reminder['user_id']} for deadline {reminder['deadline_id']}")
+                        
+                    else:
+                        logger.warning(f"Could not find user {reminder['user_id']} for personal reminder")
+                        
+                except hikari.ForbiddenError:
+                    logger.warning(f"Cannot send DM to user {reminder['user_id']} - DMs may be disabled")
+                    # Mark as sent anyway to avoid retrying
+                    await self.db_manager.mark_personal_reminder_sent(reminder['id'])
+                except Exception as e:
+                    logger.error(f"Error sending personal reminder to user {reminder['user_id']}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error checking personal reminders: {e}")

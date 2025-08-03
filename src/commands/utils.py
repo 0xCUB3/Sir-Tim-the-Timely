@@ -5,56 +5,31 @@ Implements utility commands for user settings and preferences.
 """
 
 import logging
-from datetime import datetime
-import pytz
-
+import functools
 import hikari
 import arc
 from hikari.errors import NotFoundError, BadRequestError
 
-from ..database import DatabaseManager
-
 logger = logging.getLogger("sir_tim.commands.utils")
 
-async def safe_defer(ctx: arc.GatewayContext) -> bool:
-    """
-    Safely defer a Discord interaction with proper error handling.
-    
-    Returns:
-        bool: True if defer was successful, False if the interaction is no longer valid
-    """
-    try:
-        await ctx.defer()
-        return True
-    except NotFoundError:
-        logger.error("Discord interaction not found - interaction may have expired")
-        return False
-    except BadRequestError:
-        logger.error("Discord interaction already acknowledged")
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error during defer: {e}")
-        return False
-
-async def safe_respond(ctx: arc.GatewayContext, content=None, **kwargs) -> bool:
-    """
-    Safely respond to a Discord interaction with proper error handling.
-    
-    Returns:
-        bool: True if response was successful, False if the interaction is no longer valid
-    """
-    try:
-        await ctx.respond(content, **kwargs)
-        return True
-    except NotFoundError:
-        logger.error("Discord interaction not found - cannot respond")
-        return False
-    except BadRequestError:
-        logger.error("Discord interaction already acknowledged - cannot respond")
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error during response: {e}")
-        return False
+def safe_command(func):
+    """Decorator to defer interaction and handle errors uniformly."""
+    @functools.wraps(func)
+    async def wrapper(ctx: arc.GatewayContext, *args, **kwargs):
+        try:
+            await ctx.defer()
+            return await func(ctx, *args, **kwargs)
+        except NotFoundError:
+            logger.error("Discord interaction not found")
+        except BadRequestError:
+            logger.error("Discord interaction already acknowledged")
+        except Exception as e:
+            logger.error(f"Error in command {func.__name__}: {e}")
+            try:
+                await ctx.respond("Sorry, something went wrong.")
+            except Exception:
+                pass
+    return wrapper
 
 # Create a plugin for utility commands
 plugin = arc.GatewayPlugin("utils")

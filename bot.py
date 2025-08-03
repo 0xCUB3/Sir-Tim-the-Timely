@@ -125,10 +125,9 @@ class SirTimBot:
     async def load_extensions(self):
         """Load all command extensions."""
         try:
-            # Load all command modules - no need for interface switching
+            # Load all command modules
             extensions = [
-                "src.commands.simplified_interface",  # /tim, /urgent, /setup
-                "src.commands.deadlines",            # /deadlines list/next/search/etc
+                "src.commands.deadlines",            # /deadlines and main /tim commands
                 "src.commands.admin",                # /admin commands
                 "src.commands.utils",                # utility commands
                 "src.commands.chat",                 # /setchat, /removechat, /chatstatus

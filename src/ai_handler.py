@@ -32,7 +32,7 @@ class AIHandler:
         
         # Configure Gemini API
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-2.0-flash-lite')
+        self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
         
         # System prompt for deadline queries
         self.system_prompt = """
@@ -58,7 +58,7 @@ Current date context: {current_date}
 Available deadline categories: Medical, Academic, Housing, Financial, Orientation, Administrative, Registration, General
 """
         
-        logger.info("AI Handler initialized with Gemini 2.0 Flash Lite")
+        logger.info("AI Handler initialized with Gemini 2.5 Flash Lite")
     
     async def process_natural_query(self, query: str, user_context: Optional[Dict] = None) -> str:
         """Process a natural language query about deadlines."""
@@ -416,13 +416,13 @@ URL: {deadline.get('url', 'No URL available')}
             test_response = self.model.generate_content("Hello")
             return {
                 'status': 'healthy',
-                'model': 'gemini-2.0-flash-lite',
+                'model': 'gemini-2.5-flash-lite',
                 'test_successful': bool(test_response.text)
             }
         except Exception as e:
             return {
                 'status': 'unhealthy',
-                'model': 'gemini-2.0-flash-lite',
+                'model': 'gemini-2.5-flash-lite',
                 'error': str(e)
             }
 

@@ -5,6 +5,7 @@ Implements commands for managing and viewing deadlines.
 """
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import functools
@@ -47,42 +48,400 @@ def autodefer(func):
                 pass
     return wrapper
 
-@deadlines.include
-@arc.slash_subcommand("list", "List all deadlines or filter by category")
-@autodefer
-async def list_deadlines(
-    ctx: arc.GatewayContext,
-    category: arc.Option[str, arc.StrParams("Filter by category (optional)", choices={
-        "All Categories": "all",
-        "General": "General",
-        "Medical": "Medical", 
-        "Academic": "Academic",
-        "Housing": "Housing",
-        "Financial": "Financial",
-        "Orientation": "Orientation",
-        "Administrative": "Administrative",
-        "Registration": "Registration"
-    })] = "all"
-) -> None:
-    """List all deadlines or filter by category."""
-    db_manager = ctx.client.get_type_dependency(DatabaseManager)
-    
+# Custom button and view for "View All Deadlines"
+class ViewAllDeadlinesButton(miru.Button):
+    def __init__(self):
+        super().__init__(
+            style=hikari.ButtonStyle.LINK,
+            label="🌐 View All Deadlines"
+        )
+        self.url = os.getenv("MIT_DEADLINES_URL", "https://firstyear.mit.edu/orientation/countdown-to-campus-before-you-arrive/critical-summer-actions-and-deadlines/")
+
+class ViewAllDeadlinesView(miru.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(ViewAllDeadlinesButton())
+
+async def safe_defer_and_respond(ctx: arc.GatewayContext, func):
+    """Safely defer and execute a function with error handling."""
     try:
-        # Convert "all" to None for the database query
-        category_filter = None if category == "all" else category
+        await ctx.defer()
+        return await func()
+    except NotFoundError:
+        logger.error("Discord interaction not found")
+        return
+    except BadRequestError:
+        logger.error("Discord interaction already acknowledged")
+        return
+    except Exception as e:
+        logger.error(f"Error in command: {e}")
+        try:
+            await ctx.respond("Sorry, something went wrong. Please try again.")
+        except (NotFoundError, BadRequestError):
+            pass
+
+# Main command - handles everything with AI (moved from simplified_interface)
+@plugin.include
+@arc.slash_command("tim", "Ask Tim anything about deadlines or get quick info")
+async def tim_main(
+    ctx: arc.GatewayContext,
+    query: arc.Option[str, arc.StrParams("What would you like to know? (e.g., 'what's due soon?', 'housing deadlines')")] = None
+) -> None:
+    """
+    Main command that handles all deadline queries intelligently.
+    
+    Examples:
+    - /tim what's due this week?
+    - /tim housing deadlines
+    - /tim help
+    - /tim (no query - shows upcoming deadlines)
+    """
+    async def execute():
+        db_manager = ctx.client.get_type_dependency(DatabaseManager)
+        ai_handler = ctx.client.get_type_dependency(AIHandler, default=None)
         
-        # Get all active deadlines
-        all_deadlines = await db_manager.get_deadlines(category=category_filter)
-        
-        if not all_deadlines:
-            await ctx.respond("No deadlines found.")
+        # If no query provided, show all deadlines using the detailed format
+        if not query:
+            deadlines = await db_manager.get_deadlines()
+            if not deadlines:
+                embed = hikari.Embed(
+                    title="🎉 Great News!",
+                    description="No deadlines found.",
+                    color=0x00FF00,
+                    timestamp=datetime.now(timezone.utc)
+                )
+                view = ViewAllDeadlinesView()
+                await ctx.respond(embed=embed, components=view)
+                return
+            # Regular detailed deadline list
+            from ..commands.deadlines import send_deadline_list
+            await send_deadline_list(ctx, deadlines, "All MIT Deadlines")
             return
         
-        await send_deadline_list(ctx, all_deadlines, title="MIT Deadlines")
+        # Handle special queries
+        query_lower = query.lower().strip()
         
-    except Exception as e:
-        logger.error(f"Error listing deadlines: {e}")
-        await ctx.respond("Sorry, something went wrong while retrieving the deadlines.")
+        # Help queries
+        if any(word in query_lower for word in ['help', 'commands', 'how', 'what can']):
+            await show_quick_help(ctx)
+            return
+        
+        # Settings queries
+        if any(word in query_lower for word in ['settings', 'timezone', 'preferences', 'remind me']):
+            await show_quick_settings(ctx)
+            return
+        
+        # Use AI for natural language processing if available
+        if ai_handler:
+            # Show typing while AI processes the query
+            async with ctx.client.rest.trigger_typing(ctx.channel_id):
+                response = await ai_handler.process_natural_query(query)
+                embed = hikari.Embed(
+                    title="🤖 Tim's Response",
+                    description=response,
+                    color=0x4285F4,
+                    timestamp=datetime.now(timezone.utc)
+                )
+                embed.set_footer(text="💡 Tip: Try '/tim' with no text to see all deadlines")
+                
+                # Add view with button
+                view = ViewAllDeadlinesView()
+                await ctx.respond(embed=embed, components=view)
+        else:
+            # Fallback to keyword search
+            results = await db_manager.search_deadlines(query)
+            if not results:
+                await ctx.respond(f"No deadlines found for '{query}'. Try '/tim help' for examples.")
+                return
+            await send_smart_deadline_list(ctx, results, f"🔍 Search Results for '{query}'")
+    
+    await safe_defer_and_respond(ctx, execute)
+
+# Quick access command for immediate deadlines (moved from simplified_interface)
+@plugin.include
+@arc.slash_command("urgent", "Show urgent deadlines (next 3 days)")
+async def urgent_deadlines(ctx: arc.GatewayContext) -> None:
+    """Show deadlines that are urgent (next 3 days)."""
+    async def execute():
+        db_manager = ctx.client.get_type_dependency(DatabaseManager)
+        deadlines = await db_manager.get_upcoming_deadlines(3)
+        
+        if not deadlines:
+            embed = hikari.Embed(
+                title="✅ All Clear!",
+                description="No urgent deadlines in the next 3 days.",
+                color=0x00FF00,
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.add_field(
+                name="What's Next?",
+                value="Use `/tim` to see what's coming up this week.",
+                inline=False
+            )
+            view = ViewAllDeadlinesView()
+            await ctx.respond(embed=embed, components=view)
+            return
+        
+        await send_smart_deadline_list(ctx, deadlines, "🚨 Urgent Deadlines (Next 3 Days)")
+    
+    await safe_defer_and_respond(ctx, execute)
+
+# One-click setup command (moved from simplified_interface)
+@plugin.include
+@arc.slash_command("setup", "Quick setup for notifications and preferences")
+async def quick_setup(ctx: arc.GatewayContext) -> None:
+    """Quick setup wizard for new users."""
+    async def execute():
+        db_manager = ctx.client.get_type_dependency(DatabaseManager)
+        
+        # Set sensible defaults
+        await db_manager.update_user_preferences(
+            user_id=ctx.author.id,
+            timezone="US/Eastern",  # MIT timezone
+            daily_reminder_time="09:00",
+            reminder_enabled=True
+        )
+        
+        embed = hikari.Embed(
+            title="Setup Complete!",
+            description="Tim is now configured with smart defaults for MIT students.",
+            color=0x00BFFF,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        embed.add_field(
+            name="Your Settings",
+            value=(
+                "• **Timezone**: US/Eastern (MIT time)\n"
+                "• **Daily Reminders**: 9:00 AM\n"
+                "• **Notifications**: Enabled\n"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Getting Started",
+            value=(
+                "• Type `/tim` to see upcoming deadlines\n"
+                "• Type `/urgent` for urgent deadlines\n"
+                "• Ask Tim questions like '/tim housing deadlines'\n"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text="You can change these settings anytime with '/tim settings'")
+    await ctx.respond(embed=embed)
+    
+    await safe_defer_and_respond(ctx, execute)
+
+async def send_smart_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict], title: str) -> None:
+    """Send a simplified, user-friendly deadline list."""
+    if not deadlines:
+        embed = hikari.Embed(
+            title=title,
+            description="No deadlines found.",
+            color=0x4285F4,
+            timestamp=datetime.now(timezone.utc)
+        )
+        await ctx.respond(embed=embed)
+        return
+    
+    # Sort by urgency and date
+    sorted_deadlines = sorted(deadlines, key=lambda x: x['due_date'])
+    
+    # For urgent view, show all on one page. For regular view, paginate if needed
+    is_urgent = "urgent" in title.lower()
+    per_page = len(sorted_deadlines) if is_urgent else 6
+    
+    pages = []
+    total = len(sorted_deadlines)
+    
+    for i in range(0, total, per_page):
+        page_deadlines = sorted_deadlines[i:i+per_page]
+        page_num = (i // per_page) + 1
+        total_pages = (total + per_page - 1) // per_page
+        
+        embed = hikari.Embed(
+            title=title,
+            color=0x4285F4,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        if total_pages > 1:
+            embed.description = f"Page {page_num} of {total_pages} • Showing {len(page_deadlines)} of {total} deadlines"
+        else:
+            embed.description = f"Showing {len(page_deadlines)} deadline{'s' if len(page_deadlines) != 1 else ''}"
+        
+        for dl in page_deadlines:
+            # Parse due date and time
+            due_date_raw = dl.get('due_date')
+            if due_date_raw:
+                try:
+                    due_date = datetime.fromisoformat(due_date_raw.replace('Z', '+00:00'))
+                    days_until = (due_date.date() - datetime.now(timezone.utc).date()).days
+                    
+                    # Format date and time
+                    date_str = due_date.strftime('%B %d, %Y')
+                    time_str = due_date.strftime('%I:%M %p EST')
+                    
+                    # Determine urgency status and circle color
+                    if days_until < 0:
+                        status_circle = "🔴"  # Red for overdue
+                    elif days_until == 0:
+                        status_circle = "🔴"  # Red for due today
+                    elif days_until == 1:
+                        status_circle = "🔴"  # Red for due tomorrow
+                    elif days_until <= 3:
+                        status_circle = "🔴"  # Red for urgent (next 3 days)
+                    elif days_until <= 7:
+                        status_circle = "🟠"  # Orange for this week
+                    else:
+                        status_circle = "🟠"  # Orange for upcoming
+                    
+                    full_date_time = f"{date_str} at {time_str}"
+                    
+                except Exception:
+                    status_circle = "🟠"
+                    full_date_time = "Date and time unknown"
+            else:
+                status_circle = "🟠"
+                full_date_time = "Date and time unknown"
+            
+            title_str = dl.get('title', 'Untitled')
+            category = dl.get('category', 'General')
+            
+            # Clean up description
+            desc = dl.get('description', '').strip()
+            if desc and len(desc) > 150:
+                desc = desc[:147] + "..."
+            
+            # Create field value (removed status line, added circle to title)
+            field_value = f"📅 **Due:** {full_date_time}\n📂 **Category:** {category}"
+            if desc:
+                field_value += f"\n📝 **Details:** {desc}"
+            
+            # Add link if available
+            url = dl.get('url')
+            if url and url.strip() and url.lower() != 'no url available':
+                field_value += f"\n🔗 **Link:** {url}"
+            
+            embed.add_field(
+                name=f"{status_circle} {title_str}",
+                value=field_value,
+                inline=False
+            )
+        
+        if not is_urgent:
+            embed.set_footer(text="💡 Use '/urgent' for urgent deadlines or '/tim help' for more options")
+        else:
+            embed.set_footer(text="💡 Use '/tim' to see all upcoming deadlines")
+        
+        pages.append(embed)
+    
+    # Send response with "View All Deadlines" button
+    if len(pages) == 1:
+        # Create view with button for single page
+        view = ViewAllDeadlinesView()
+        await ctx.respond(embed=pages[0], components=view)
+    else:
+        # Create navigator for multiple pages (without adding incompatible button)
+        miru_client = ctx.client.get_type_dependency(miru.Client)
+        buttons = [nav.PrevButton(), nav.IndicatorButton(), nav.NextButton(), nav.StopButton()]
+        navigator = nav.NavigatorView(pages=pages, items=buttons, timeout=300)
+        
+        # Add the "View All Deadlines" button to each page footer instead
+        for page in pages:
+            current_footer = page.footer.text if page.footer else ""
+            if current_footer:
+                page.set_footer(text=f"{current_footer} • 🌐 View all: {os.getenv('MIT_DEADLINES_URL', 'https://firstyear.mit.edu/orientation/countdown-to-campus-before-you-arrive/critical-summer-actions-and-deadlines/')}")
+            else:
+                page.set_footer(text=f"🌐 View all deadlines: {os.getenv('MIT_DEADLINES_URL', 'https://firstyear.mit.edu/orientation/countdown-to-campus-before-you-arrive/critical-summer-actions-and-deadlines/')}")
+        
+    builder = await navigator.build_response_async(miru_client)
+    await ctx.respond_with_builder(builder)
+    miru_client.start_view(navigator)
+
+async def show_quick_help(ctx: arc.GatewayContext) -> None:
+    """Show simplified help information."""
+    embed = hikari.Embed(
+        title="How to Use Tim",
+        description="Tim makes deadline tracking simple! Here's what you can do:",
+        color=0x9B59B6,
+        timestamp=datetime.now(timezone.utc)
+    )
+    
+    embed.add_field(
+        name="Quick Commands",
+        value=(
+            "• `/tim` - See upcoming deadlines\n"
+            "• `/urgent` - Show urgent deadlines (next 3 days)\n"
+            "• `/setup` - Quick setup for new users\n"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="Ask Tim Anything",
+        value=(
+            "• `/tim what's due this week?`\n"
+            "• `/tim housing deadlines`\n"
+            "• `/tim medical forms`\n"
+            "• `/tim help with financial aid`\n"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="Advanced Commands",
+        value=(
+            "• `/deadlines next` - Show deadlines in next X days\n"
+            "• `/deadlines search` - Search for specific deadlines\n"
+            "• `/deadlines remind` - Set personal reminders\n"
+            "• `/timezone` - Set your timezone\n"
+            "• `/preferences` - Manage notification settings\n"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="Tim understands natural language - just ask!")
+    await ctx.edit_response(embed=embed)
+
+async def show_quick_settings(ctx: arc.GatewayContext) -> None:
+    """Show simplified settings interface."""
+    db_manager = ctx.client.get_type_dependency(DatabaseManager)
+    
+    # Get current preferences
+    prefs = await db_manager.get_user_preferences(ctx.author.id)
+    
+    embed = hikari.Embed(
+        title="Your Settings",
+        description="Current notification and timezone settings:",
+        color=0x00BFFF,
+        timestamp=datetime.now(timezone.utc)
+    )
+    
+    embed.add_field(
+        name="Current Settings",
+        value=(
+            f"• **Timezone**: {prefs.get('timezone', 'US/Eastern')}\n"
+            f"• **Daily Reminders**: {prefs.get('daily_reminder_time', '9:00 AM')}\n"
+            f"• **Notifications**: {'Enabled' if prefs.get('reminder_enabled', True) else 'Disabled'}\n"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="Quick Actions",
+        value=(
+            "• Use `/setup` to reset to defaults\n"
+            "• Use `/timezone` to change your timezone\n"
+            "• Use `/preferences` for detailed settings\n"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="Most students use the default MIT timezone (US/Eastern)")
+    await ctx.edit_response(embed=embed)
 
 @deadlines.include
 @arc.slash_subcommand("next", "Show deadlines in the next X days")
@@ -102,7 +461,7 @@ async def next_deadlines(
             await ctx.respond(f"Great news! 🎉 No deadlines in the next {days} days.")
             return
         
-        await send_deadline_list(ctx, deadlines, title=f"Upcoming Deadlines (Next {days} Days)")
+        await send_smart_deadline_list(ctx, deadlines, title=f"Upcoming Deadlines (Next {days} Days)")
         
     except NotFoundError as e:
         logger.error(f"Discord interaction not found: {e}")
@@ -156,7 +515,7 @@ async def search_deadlines(
                 await ctx.respond(f"No deadlines found matching '{query}'.")
                 return
             
-            await send_deadline_list(ctx, results, title=f"Search Results for '{query}'")
+            await send_smart_deadline_list(ctx, results, title=f"Search Results for '{query}'")
             
     except NotFoundError as e:
         logger.error(f"Discord interaction not found: {e}")
@@ -181,7 +540,7 @@ async def set_reminder(
     deadline_id: arc.Option[int, arc.IntParams("ID of the deadline to set a reminder for")],
     hours: arc.Option[int, arc.IntParams("Hours before deadline to be reminded")] = 24
 ) -> None:
-    """Set a personal reminder for a deadline."""
+    """Set a personal reminder for a deadline that will be sent via DM."""
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
     
     try:
@@ -190,30 +549,51 @@ async def set_reminder(
         deadline = next((d for d in deadlines if d['id'] == deadline_id), None)
         
         if not deadline:
-            await ctx.respond("Deadline not found. Please check the ID and try again.")
+            await ctx.respond("❌ Deadline not found. Please check the ID and try again.", flags=hikari.MessageFlag.EPHEMERAL)
             return
         
         # Calculate reminder time
         due_date = datetime.fromisoformat(deadline['due_date'].replace('Z', '+00:00'))
         reminder_time = due_date - timedelta(hours=hours)
         
+        # Check if reminder time is in the past
+        if reminder_time <= datetime.now(timezone.utc):
+            await ctx.respond("❌ The reminder time would be in the past. Please choose fewer hours or a different deadline.", flags=hikari.MessageFlag.EPHEMERAL)
+            return
+        
+        # Store the personal reminder in database
+        await db_manager.add_personal_reminder(
+            user_id=ctx.author.id,
+            deadline_id=deadline_id,
+            reminder_time=reminder_time,
+            hours_before=hours
+        )
+        
+        # Send confirmation
         embed = hikari.Embed(
-            title="🔔 Reminder Set",
-            description=f"You'll be reminded about **{deadline['title']}** {hours} hour(s) before the deadline.",
+            title="✅ Personal Reminder Set",
+            description=f"I'll send you a **DM** about **{deadline['title']}** {hours} hour(s) before the deadline.",
             color=0x00BFFF,
             timestamp=datetime.now(timezone.utc)
         )
         
-        embed.add_field(name="Due Date", value=due_date.strftime("%B %d, %Y at %I:%M %p"), inline=True)
-        embed.add_field(name="Reminder Time", value=reminder_time.strftime("%B %d, %Y at %I:%M %p"), inline=True)
+        embed.add_field(name="📅 Due Date", value=due_date.strftime("%B %d, %Y at %I:%M %p EST"), inline=True)
+        embed.add_field(name="⏰ Reminder Time", value=reminder_time.strftime("%B %d, %Y at %I:%M %p EST"), inline=True)
+        embed.add_field(name="📬 Delivery Method", value="Direct Message (DM)", inline=True)
         
-        embed.set_footer(text="Sir Tim the Timely • Reminder System")
+        embed.add_field(
+            name="💡 Note", 
+            value="Make sure your DMs are open so I can reach you!", 
+            inline=False
+        )
         
-        await ctx.respond(embed=embed)
+        embed.set_footer(text="Sir Tim the Timely • Personal Reminder System")
+        
+        await ctx.respond(embed=embed, flags=hikari.MessageFlag.EPHEMERAL)
         
     except Exception as e:
-        logger.error(f"Error setting reminder: {e}")
-        await ctx.respond("Sorry, something went wrong while setting your reminder.")
+        logger.error(f"Error setting personal reminder: {e}")
+        await ctx.respond("❌ Sorry, something went wrong while setting your reminder.", flags=hikari.MessageFlag.EPHEMERAL)
 
 @deadlines.include
 @arc.slash_subcommand("help", "Show detailed help and FAQ about deadlines")
@@ -229,7 +609,7 @@ async def deadline_help(ctx: arc.GatewayContext) -> None:
     embed.add_field(
         name="Available Commands",
         value=(
-            "• `/deadlines list` - List all deadlines\n"
+            "• `/tim` - List all deadlines (recommended)\n"
             "• `/deadlines next` - Show deadlines in the next 7 days\n"
             "• `/deadlines search` - Search deadlines with natural language\n"
             "• `/deadlines remind` - Set personal reminder\n"
@@ -260,7 +640,9 @@ async def deadline_help(ctx: arc.GatewayContext) -> None:
             "**Q: Are deadline times in my timezone?**\n"
             "A: Deadlines are displayed in US Eastern Time. Use `/timezone set` to customize your view.\n\n"
             "**Q: How do I get deadline reminders?**\n"
-            "A: Daily reminders are sent to configured channels. For personal reminders, use `/deadlines remind`."
+            "A: Server-wide reminders are sent to configured channels 24 and 6 hours before deadlines. For personal DM reminders, use `/deadlines remind` with a deadline ID.\n\n"
+            "**Q: What's the difference between `/tim` and `/deadlines` commands?**\n"
+            "A: `/tim` is the main command for viewing all deadlines. Use `/deadlines` subcommands for specific tasks."
         ),
         inline=False
     )

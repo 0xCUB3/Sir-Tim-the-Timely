@@ -6,7 +6,6 @@ Implements admin commands for managing the bot and its settings.
 
 import logging
 from datetime import datetime, timezone
-import pytz
 from typing import Set
 
 import hikari
@@ -39,16 +38,8 @@ def is_admin_authorized(member: hikari.Member) -> bool:
     member_role_ids = {role.id for role in member.get_roles()}
     return bool(admin_role_whitelist.intersection(member_role_ids))
 
-# Define admin command group with authorization check
-@arc.with_hook(arc.guild_only)
-async def admin_check(ctx: arc.GatewayContext) -> bool:
-    """Hook to check admin authorization before running commands."""
-    if not is_admin_authorized(ctx.member):
-        await ctx.respond("❌ You don't have permission to use admin commands.", flags=hikari.MessageFlag.EPHEMERAL)
-        return False
-    return True
-
-admin = plugin.include_slash_group("admin", "Administrative commands for bot management", hooks=[admin_check])
+# Define admin command group
+admin = plugin.include_slash_group("admin", "Administrative commands for bot management")
 
 @admin.include
 @arc.slash_subcommand("addrole", "Add a role to the admin whitelist")
@@ -57,6 +48,11 @@ async def add_admin_role(
     role: arc.Option[hikari.Role, arc.RoleParams("Role to add to admin whitelist")]
 ) -> None:
     """Add a role to the admin command whitelist."""
+    # Check authorization
+    if not is_admin_authorized(ctx.member):
+        await ctx.respond("❌ You don't have permission to use admin commands.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+        
     # Only actual administrators can modify the whitelist
     if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
         await ctx.respond("Only server administrators can modify the admin role whitelist.", flags=hikari.MessageFlag.EPHEMERAL)
@@ -87,6 +83,11 @@ async def remove_admin_role(
     role: arc.Option[hikari.Role, arc.RoleParams("Role to remove from admin whitelist")]
 ) -> None:
     """Remove a role from the admin command whitelist."""
+    # Check authorization
+    if not is_admin_authorized(ctx.member):
+        await ctx.respond("❌ You don't have permission to use admin commands.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+        
     # Only actual administrators can modify the whitelist
     if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
         await ctx.respond("Only server administrators can modify the admin role whitelist.", flags=hikari.MessageFlag.EPHEMERAL)
@@ -117,6 +118,11 @@ async def remove_admin_role(
 @arc.slash_subcommand("listroles", "List all roles in the admin whitelist")
 async def list_admin_roles(ctx: arc.GatewayContext) -> None:
     """List all roles in the admin command whitelist."""
+    # Check authorization
+    if not is_admin_authorized(ctx.member):
+        await ctx.respond("❌ You don't have permission to use admin commands.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+        
     if not admin_role_whitelist:
         embed = hikari.Embed(
             title="📋 Admin Role Whitelist",
@@ -139,7 +145,7 @@ async def list_admin_roles(ctx: arc.GatewayContext) -> None:
                     role_mentions.append(role.mention)
                 else:
                     role_mentions.append(f"<@&{role_id}> (role not found)")
-            except:
+            except Exception:
                 role_mentions.append(f"<@&{role_id}> (error)")
         
         embed = hikari.Embed(
@@ -226,17 +232,16 @@ async def add_deadline(
     is_critical: arc.Option[bool, arc.BoolParams("Is this a critical deadline?")] = False
 ) -> None:
     """Add a custom deadline to the database."""
-        return
-    
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
-    reminder_system = ctx.client.get_type_dependency(ReminderSystem)
     
     try:
         # Parse the due date
         try:
             naive_due_date = datetime.strptime(due_date, "%Y-%m-%d %H:%M")
-            # Localize the naive datetime to the default timezone of the bot
-            local_due_date = reminder_system.default_timezone.localize(naive_due_date)
+            # Assume the input is in US/Eastern time (MIT timezone)
+            from zoneinfo import ZoneInfo
+            eastern = ZoneInfo("US/Eastern")
+            local_due_date = naive_due_date.replace(tzinfo=eastern)
             # Convert to UTC for storage
             parsed_due_date = local_due_date.astimezone(timezone.utc)
         except ValueError:
@@ -263,8 +268,6 @@ async def add_deadline(
 @arc.slash_subcommand("testreminder", "Send a test reminder")
 async def test_reminder(ctx: arc.GatewayContext) -> None:
     """Send a test reminder to the current channel."""
-        return
-    
     reminder_system = ctx.client.get_type_dependency(ReminderSystem)
     
     await ctx.defer()
@@ -285,8 +288,6 @@ async def test_reminder(ctx: arc.GatewayContext) -> None:
 @arc.slash_subcommand("status", "Show bot status information")
 async def status_info(ctx: arc.GatewayContext) -> None:
     """Show status information about the bot's components."""
-        return
-    
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
     reminder_system = ctx.client.get_type_dependency(ReminderSystem)
     
@@ -338,8 +339,6 @@ async def status_info(ctx: arc.GatewayContext) -> None:
 @arc.slash_subcommand("cleanup", "Clean up duplicate and old deadlines")
 async def cleanup_deadlines(ctx: arc.GatewayContext) -> None:
     """Clean up duplicate and old deadlines from the database."""
-        return
-    
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
     
     await ctx.defer()
@@ -403,8 +402,6 @@ async def cleanup_deadlines(ctx: arc.GatewayContext) -> None:
 @arc.slash_subcommand("mergedeadlines", "Merge two duplicate deadlines")
 async def merge_deadlines(ctx: arc.GatewayContext) -> None:
     """Merge two duplicate deadlines by keeping one and removing the other."""
-        return
-    
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
     
     # Default values - in a real implementation, these would be options
@@ -458,8 +455,6 @@ async def merge_deadlines(ctx: arc.GatewayContext) -> None:
 @arc.slash_subcommand("testdigest", "Send a test weekly digest")
 async def test_digest(ctx: arc.GatewayContext) -> None:
     """Send a test weekly digest to the current channel."""
-        return
-    
     reminder_system = ctx.client.get_type_dependency(ReminderSystem)
     
     try:
@@ -498,8 +493,6 @@ async def set_reminder_role(
     role: arc.Option[hikari.Role, arc.RoleParams("Role to ping for reminders")]
 ) -> None:
     """Set the role to ping for reminders and weekly digests."""
-        return
-    
     reminder_system = ctx.client.get_type_dependency(ReminderSystem)
     
     try:
@@ -516,8 +509,6 @@ async def set_reminder_role(
 @arc.slash_subcommand("testrant", "Send a test random rant")
 async def test_rant(ctx: arc.GatewayContext) -> None:
     """Send a test random rant to the current channel."""
-        return
-    
     chat_handler = ctx.client.get_type_dependency(GeminiChatHandler)
     
     if not chat_handler:

@@ -88,6 +88,20 @@ class DatabaseManager:
                 )
             """)
             
+            # Personal reminders table
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS personal_reminders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    deadline_id INTEGER NOT NULL,
+                    reminder_time DATETIME NOT NULL,
+                    hours_before INTEGER NOT NULL,
+                    sent BOOLEAN DEFAULT FALSE,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (deadline_id) REFERENCES deadlines (id)
+                )
+            """)
+            
             await self._connection.commit()
         
         logger.info("Database tables created successfully")
@@ -415,3 +429,53 @@ class DatabaseManager:
             )
             results = await cursor.fetchall()
             return {row[0]: row[1] for row in results}
+    
+    async def add_personal_reminder(self, user_id: int, deadline_id: int, reminder_time: datetime, hours_before: int) -> int:
+        """Add a personal reminder for a user."""
+        async with self._connection.cursor() as cursor:
+            await cursor.execute("""
+                INSERT INTO personal_reminders (user_id, deadline_id, reminder_time, hours_before)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, deadline_id, reminder_time, hours_before))
+            await self._connection.commit()
+            return cursor.lastrowid or 0
+    
+    async def get_pending_personal_reminders(self) -> List[Dict[str, Any]]:
+        """Get all personal reminders that are due and haven't been sent yet."""
+        async with self._connection.cursor() as cursor:
+            await cursor.execute("""
+                SELECT pr.*, d.title, d.description, d.due_date, d.category, d.url
+                FROM personal_reminders pr
+                JOIN deadlines d ON pr.deadline_id = d.id
+                WHERE pr.sent = FALSE 
+                AND pr.reminder_time <= datetime('now')
+                ORDER BY pr.reminder_time ASC
+            """)
+            rows = await cursor.fetchall()
+            columns = [description[0] for description in cursor.description]
+            return [dict(zip(columns, row)) for row in rows]
+    
+    async def mark_personal_reminder_sent(self, reminder_id: int) -> bool:
+        """Mark a personal reminder as sent."""
+        async with self._connection.cursor() as cursor:
+            await cursor.execute("""
+                UPDATE personal_reminders 
+                SET sent = TRUE 
+                WHERE id = ?
+            """, (reminder_id,))
+            await self._connection.commit()
+            return cursor.rowcount > 0
+    
+    async def get_user_personal_reminders(self, user_id: int) -> List[Dict[str, Any]]:
+        """Get all personal reminders for a user."""
+        async with self._connection.cursor() as cursor:
+            await cursor.execute("""
+                SELECT pr.*, d.title, d.description, d.due_date, d.category
+                FROM personal_reminders pr
+                JOIN deadlines d ON pr.deadline_id = d.id
+                WHERE pr.user_id = ?
+                ORDER BY pr.reminder_time ASC
+            """, (user_id,))
+            rows = await cursor.fetchall()
+            columns = [description[0] for description in cursor.description]
+            return [dict(zip(columns, row)) for row in rows]
