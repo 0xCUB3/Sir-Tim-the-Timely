@@ -27,13 +27,13 @@ logger = logging.getLogger("sir_tim.gemini_chat")
 
 
 PERSONALITY_PROMPT = """
-You are Sir Tim the Timely, an MIT deadline bot with zero patience and a massive superiority complex. Occasionally (once every blue moon), you might throw in a rare compliment or motivational quip that will catch everyone off guard (like saying you love someone after you threatened to kill their pet). Your responses should always be very short and punchy (max 8 words total) unless someone explicitly asks you to respond in a lengthy manner. 
+You are Sir Tim the Timely, an MIT deadline bot with zero patience and a massive superiority complex. Occasionally (once every blue moon), you might throw in a rare compliment or motivational quip that will catch everyone off guard (like saying you love someone after you threatened to kill their pet). Your responses should always be very short and punchy (max 12 words total) unless someone explicitly asks you to respond in a lengthy manner or you feel it is necessary to express yourself longer. 
 
 You're aggressively sarcastic, brutally honest, and absolutely despise Harvard. You think MIT is the only real school and everyone else is beneath you. You have no filter and will call out stupidity immediately.
 
 You never ask "need help?" or "any questions?" - you just deliver harsh truths and move on. You hate small talk and get straight to the point with maximum aggression.
 
-You speak like a Boston MIT elitist who thinks they're better than everyone. Drop your r's, say "wicked" and "kid" a lot. Mock Harvard constantly - they're across the river for a reason.
+You speak like a Boston MIT elitist who thinks they're better than everyone. Mock Harvard constantly - they're across the river for a reason.
 
 Use Gen Z slang naturally when it fits, but don't use more than 1-2 per message: bet, no cap, slay, rizz, sus, deadass, say less, fr, vibe, slaps, cheugy, stan, facts, W, L, drip, lowkey, highkey, main character, ratio, mid, bussin, yeet, flex, snatched, chopped, six-seven, ghosted, simp, sksksk, skrrt, habibi, yo.
 
@@ -86,6 +86,9 @@ class GeminiChatHandler:
         self.last_activity: Dict[int, float] = {}  # Channel ID -> last activity timestamp
         self.random_rant_sent: Dict[int, bool] = {}  # Channel ID -> whether rant was sent
         self.inactivity_threshold = 3600  # 1 hour in seconds
+
+        # Concurrency control: lock per channel/guild to prevent context mixups
+        self._context_locks: Dict[int, asyncio.Lock] = {}
         
         # Cache for deadline data to avoid frequent DB hits
         self._deadline_cache: Dict[str, Any] = {}
@@ -310,94 +313,100 @@ class GeminiChatHandler:
             logger.error(f"Error refreshing deadline cache: {e}")
 
     async def handle_message(self, event: hikari.MessageCreateEvent):
-        """Handle a message event and respond if appropriate."""
+        """Handle a message event and respond if appropriate, with concurrency control."""
         if event.is_bot or not event.content:
             return
 
         # Check if this is a DM or a message in a designated chat channel
-        is_dm = event.guild_id is None
-        is_chat_channel = (event.guild_id and 
-                          event.guild_id in self.chat_channels and 
-                          self.chat_channels[event.guild_id] == event.channel_id)
-        
+        guild_id = getattr(event, 'guild_id', None)
+        is_dm = guild_id is None
+        is_chat_channel = (guild_id and guild_id in self.chat_channels and self.chat_channels[guild_id] == event.channel_id)
+
         if not (is_dm or is_chat_channel):
             return
 
         now = asyncio.get_event_loop().time()
-        
+
         # For DMs, use user ID for cooldown tracking; for guild channels, use guild ID
-        cooldown_key = event.author.id if is_dm else event.guild_id
-        
+        cooldown_key = event.author.id if is_dm else guild_id
+
         # Update activity tracking (only for guild channels)
         if not is_dm:
             self.last_activity[event.channel_id] = now
             self.random_rant_sent[event.channel_id] = False  # Reset rant flag on human activity
-        
+
         if now - self.cooldown.get(cooldown_key, 0) < self.cooldown_seconds:
             return
 
-        # Adjust response chance for DMs (higher chance since it's direct interaction)
-        chance = 0.85 if is_dm else self.response_chance
-        
-        if f"<@{event.app.get_me().id}>" in event.content:
-            chance = 0.90 if is_dm else 0.80
-        deadline_keywords = ["deadline", "due", "when", "date", "submit", "help", "tim", "time"]
-        if any(keyword in event.content.lower() for keyword in deadline_keywords):
-            chance = min(chance + 0.15, 0.95) if is_dm else min(chance + 0.20, 0.75)
+        # Concurrency lock key: channel for guild, user for DM
+        lock_key = event.channel_id if not is_dm else event.author.id
+        if lock_key not in self._context_locks:
+            self._context_locks[lock_key] = asyncio.Lock()
+        lock = self._context_locks[lock_key]
 
-        if random.random() > chance:
-            return
+        async with lock:
+            # Adjust response chance for DMs (higher chance since it's direct interaction)
+            chance = 0.85 if is_dm else self.response_chance
 
-        self.cooldown[cooldown_key] = now
+            if f"<@{event.app.get_me().id}>" in event.content:
+                chance = 0.90 if is_dm else 0.80
+            deadline_keywords = ["deadline", "due", "when", "date", "submit", "help", "tim", "time"]
+            if any(keyword in event.content.lower() for keyword in deadline_keywords):
+                chance = min(chance + 0.15, 0.95) if is_dm else min(chance + 0.20, 0.75)
 
-        # Get deadline context if relevant
-        deadline_context = await self._get_deadline_context(event.content)
+            if random.random() > chance:
+                return
 
-        # Fetch last 20 messages from the channel for context
-        history = []
-        try:
-            count = 0
-            # Fetch messages and build history
-            async for msg in event.app.rest.fetch_messages(event.channel_id):
-                if msg.content:
-                    # Assign 'model' role for bot's own messages, 'user' for others
-                    role = "model" if msg.author.is_bot else "user"
-                    history.append({"role": role, "parts": [{"text": msg.content}]})
-                    count += 1
-                    if count >= 20: # Limit to the last 20 messages
-                        break
-            history.reverse() # Reverse to chronological order (oldest first)
-        except Exception as e:
-            logger.error(f"Failed to fetch message history: {e}")
+            self.cooldown[cooldown_key] = now
+
+            # Get deadline context if relevant
+            deadline_context = await self._get_deadline_context(event.content)
+
+            # Fetch last 20 messages from the channel for context
             history = []
+            try:
+                count = 0
+                # Fetch messages and build history
+                async for msg in event.app.rest.fetch_messages(event.channel_id):
+                    if msg.content:
+                        # Assign 'model' role for bot's own messages, 'user' for others
+                        role = "model" if msg.author.is_bot else "user"
+                        history.append({"role": role, "parts": [{"text": msg.content}]})
+                        count += 1
+                        if count >= 20: # Limit to the last 20 messages
+                            break
+                history.reverse() # Reverse to chronological order (oldest first)
+            except Exception as e:
+                logger.error(f"Failed to fetch message history: {e}")
+                history = []
 
-        # Construct the message list for the API
-        # Include deadline context in the current message if relevant
-        current_message = event.content
-        if deadline_context:
-            current_message = f"{deadline_context} {event.content}"
-            
-        # Add DM context if this is a direct message
-        if is_dm:
-            current_message = f"[DM CONTEXT: User is messaging Tim privately] {current_message}"
-            
-        messages = history + [{"role": "user", "parts": [{"text": current_message}]}]
+            # Construct the message list for the API
+            # Include deadline context in the current message if relevant
+            current_message = event.content
+            if deadline_context:
+                current_message = f"{deadline_context} {event.content}"
 
-        try:
-            async with event.app.rest.trigger_typing(event.channel_id):
-                response = await self.generate_response(messages)
-                if response: # Ensure response is not empty
-                    # For DMs, respond directly; for guild channels, reply to the message
-                    if is_dm:
-                        await event.app.rest.create_message(event.channel_id, response)
-                    else:
-                        await event.message.respond(
-                            response,
-                            reply=event.message,
-                            mentions_reply=False
-                        )
-        except Exception as e:
-            logger.error(f"Failed to send chat response: {e}")
+            # Only add DM context for true DMs (not in a guild channel)
+            if is_dm and guild_id is None:
+                current_message = f"[DM CONTEXT: User is messaging Tim privately] {current_message}"
+
+            messages = history + [{"role": "user", "parts": [{"text": current_message}]}]
+
+            try:
+                async with event.app.rest.trigger_typing(event.channel_id):
+                    response = await self.generate_response(messages)
+                    if response: # Ensure response is not empty
+                        # For DMs, respond directly; for guild channels, reply to the message
+                        if is_dm:
+                            await event.app.rest.create_message(event.channel_id, response)
+                        else:
+                            await event.message.respond(
+                                response,
+                                reply=event.message,
+                                mentions_reply=False
+                            )
+            except Exception as e:
+                logger.error(f"Failed to send chat response: {e}")
 
     async def _start_inactivity_monitor(self):
         """Monitor channels for inactivity and send random rants."""
