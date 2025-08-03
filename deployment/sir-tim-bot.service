@@ -1,10 +1,16 @@
 [Unit]
 Description=Sir Tim the Timely Discord Bot
+After=network.target
 
 [Service]
 Type=simple
+User=skula
+WorkingDirectory=/home/skula/Sir-Tim-the-Timely
 ExecStart=/usr/bin/python3 /home/skula/Sir-Tim-the-Timely/main.py
 Restart=always
+RestartSec=10
+StandardOutput=append:/home/skula/Sir-Tim-the-Timely/bot.log
+StandardError=append:/home/skula/Sir-Tim-the-Timely/bot.log
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

@@ -26,12 +26,22 @@ jobs:
         python3 -m pip install --upgrade pip
         python3 -m pip install -r requirements.txt --break-system-packages
     
-    - name: Start Sir Tim bot in screen session
+    - name: Install or reload systemd service for Sir Tim bot
       run: |
-        cd ${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}
-        screen -S sir-tim-bot -X quit || true
-        screen -dmS sir-tim-bot python3 main.py
-        echo "Sir Tim bot started in screen session"
+        SERVICE_PATH="/etc/systemd/system/sir-tim-bot.service"
+        REPO_SERVICE="${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}/deployment/sir-tim-bot.service"
+        if [ ! -f "$SERVICE_PATH" ]; then
+          sudo cp "$REPO_SERVICE" "$SERVICE_PATH"
+          sudo systemctl daemon-reload
+          sudo systemctl enable sir-tim-bot
+          sudo systemctl start sir-tim-bot
+          echo "Systemd service created and started."
+        else
+          sudo cp "$REPO_SERVICE" "$SERVICE_PATH"
+          sudo systemctl daemon-reload
+          sudo systemctl restart sir-tim-bot
+          echo "Systemd service reloaded and restarted."
+        fi
 
     - name: Show Logs
       run: |
