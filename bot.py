@@ -63,7 +63,7 @@ class SirTimBot:
         self.client = arc.GatewayClient(self.bot)
         
         # Initialize Miru client for interactive components
-        self.miru_client = miru.Client(self.bot)
+        self.miru_client = miru.Client(self.bot, ignore_unknown_interactions=True)
         
         # Initialize components
         self.db_manager = None
@@ -125,25 +125,15 @@ class SirTimBot:
     async def load_extensions(self):
         """Load all command extensions."""
         try:
-            # Load command modules
-            # Check if simplified interface is enabled
-            use_simplified = os.getenv("USE_SIMPLIFIED_INTERFACE", "true").lower() == "true"
-            
-            if use_simplified:
-                extensions = [
-                    "src.commands.simplified_interface",
-                    "src.commands.admin",
-                    "src.commands.chat",
-                ]
-                logger.info("Loading simplified user interface")
-            else:
-                extensions = [
-                    "src.commands.deadlines",
-                    "src.commands.admin", 
-                    "src.commands.utils",
-                    "src.commands.chat",
-                ]
-                logger.info("Loading traditional command interface")
+            # Load all command modules - no need for interface switching
+            extensions = [
+                "src.commands.simplified_interface",  # /tim, /urgent, /setup
+                "src.commands.deadlines",            # /deadlines list/next/search/etc
+                "src.commands.admin",                # /admin commands
+                "src.commands.utils",                # utility commands
+                "src.commands.chat",                 # /setchat, /removechat, /chatstatus
+            ]
+            logger.info("Loading all command interfaces")
             
             for extension in extensions:
                 try:

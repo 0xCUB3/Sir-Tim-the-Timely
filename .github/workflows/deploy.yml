@@ -26,12 +26,12 @@ jobs:
         python3 -m pip install --upgrade pip
         python3 -m pip install -r requirements.txt --break-system-packages
     
-    - name: Start Sir Tim bot (background)
+    - name: Start Sir Tim bot in screen session
       run: |
         cd ${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}
-        pkill -f "python3 main.py" || true
-        nohup python3 main.py > bot.log 2>&1 &
-        echo "Sir Tim bot started"
+        screen -S sir-tim-bot -X quit || true
+        screen -dmS sir-tim-bot python3 main.py
+        echo "Sir Tim bot started in screen session"
 
     - name: Show Logs
       run: |

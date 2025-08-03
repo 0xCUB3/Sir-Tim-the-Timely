@@ -77,20 +77,20 @@ async def tim_main(
         db_manager = ctx.client.get_type_dependency(DatabaseManager)
         ai_handler = ctx.client.get_type_dependency(AIHandler, default=None)
         
-        # If no query provided, show upcoming deadlines (smart default)
+        # If no query provided, show all deadlines (changed from upcoming only)
         if not query:
-            deadlines = await db_manager.get_upcoming_deadlines(7)
+            deadlines = await db_manager.get_deadlines()
             if not deadlines:
                 embed = hikari.Embed(
                     title="🎉 Great News!",
-                    description="No deadlines in the next 7 days.",
+                    description="No deadlines found.",
                     color=0x00FF00,
                     timestamp=datetime.now(timezone.utc)
                 )
                 view = ViewAllDeadlinesView()
                 await ctx.respond(embed=embed, components=view)
                 return
-            await send_smart_deadline_list(ctx, deadlines, "📅 Your Upcoming Deadlines")
+            await send_smart_deadline_list(ctx, deadlines, "📅 All MIT Deadlines")
             return
         
         # Handle special queries
@@ -117,7 +117,9 @@ async def tim_main(
                     color=0x4285F4,
                     timestamp=datetime.now(timezone.utc)
                 )
-                embed.set_footer(text="💡 Tip: Try '/tim' with no text to see upcoming deadlines")
+                embed.set_footer(text="💡 Tip: Try '/tim' with no text to see all deadlines")
+                
+                # Add view with button
                 view = ViewAllDeadlinesView()
                 await ctx.respond(embed=embed, components=view)
         else:
@@ -257,24 +259,24 @@ async def send_smart_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict
                     date_str = due_date.strftime('%B %d, %Y')
                     time_str = due_date.strftime('%I:%M %p EST')
                     
-                    # Determine urgency status
+                    # Determine urgency status and circle color
                     if days_until < 0:
-                        status = "OVERDUE"
+                        status_circle = "🔴"  # Red for overdue
                         urgency_note = f"Was due {abs(days_until)} day{'s' if abs(days_until) != 1 else ''} ago"
                     elif days_until == 0:
-                        status = "DUE TODAY"
+                        status_circle = "🔴"  # Red for due today
                         urgency_note = "Due today"
                     elif days_until == 1:
-                        status = "DUE TOMORROW"
+                        status_circle = "🔴"  # Red for due tomorrow
                         urgency_note = "Due tomorrow"
                     elif days_until <= 3:
-                        status = "URGENT"
+                        status_circle = "🔴"  # Red for urgent (next 3 days)
                         urgency_note = f"Due in {days_until} days"
                     elif days_until <= 7:
-                        status = "THIS WEEK"
+                        status_circle = "🟠"  # Orange for this week
                         urgency_note = f"Due in {days_until} days"
                     else:
-                        status = "UPCOMING"
+                        status_circle = "🟠"  # Orange for upcoming
                         urgency_note = f"Due in {days_until} days"
                     
                     full_date_time = f"{date_str} at {time_str}"
@@ -296,8 +298,8 @@ async def send_smart_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict
             if desc and len(desc) > 150:
                 desc = desc[:147] + "..."
             
-            # Create field value
-            field_value = f"📅 **Due:** {full_date_time}\n⚡ **Status:** {status}\n📂 **Category:** {category}"
+            # Create field value (removed status line, added circle to title)
+            field_value = f"📅 **Due:** {full_date_time}\n📂 **Category:** {category}"
             if desc:
                 field_value += f"\n📝 **Details:** {desc}"
             
@@ -307,7 +309,7 @@ async def send_smart_deadline_list(ctx: arc.GatewayContext, deadlines: List[Dict
                 field_value += f"\n🔗 **Link:** {url}"
             
             embed.add_field(
-                name=title_str,
+                name=f"{status_circle} {title_str}",
                 value=field_value,
                 inline=False
             )

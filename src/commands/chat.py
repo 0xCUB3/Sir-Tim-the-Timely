@@ -21,7 +21,7 @@ import logging
 import hikari
 import arc
 
-from src import gemini_chat_handler
+from ..gemini_chat_handler import GeminiChatHandler
 
 logger = logging.getLogger("sir_tim.commands.chat")
 
@@ -43,7 +43,7 @@ async def set_chat_channel(ctx: arc.GatewayContext) -> None:
         return
     
     try:
-        llm_handler = ctx.client.get_type_dependency(gemini_chat_handler.GeminiChatHandler)
+        llm_handler = ctx.client.get_type_dependency(GeminiChatHandler)
         
         # Set the current channel as the chat channel
         await llm_handler.set_chat_channel(ctx.guild_id, ctx.channel_id)
@@ -97,7 +97,7 @@ async def remove_chat_channel(ctx: arc.GatewayContext) -> None:
         return
     
     try:
-        llm_handler = ctx.client.get_type_dependency(HuggingFaceHandler)
+        llm_handler = ctx.client.get_type_dependency(GeminiChatHandler)
         
         # Remove the chat channel
         await llm_handler.remove_chat_channel(ctx.guild_id)
@@ -135,7 +135,7 @@ async def chat_status(ctx: arc.GatewayContext) -> None:
         return
     
     try:
-        llm_handler = ctx.client.get_type_dependency(HuggingFaceHandler)
+        llm_handler = ctx.client.get_type_dependency(GeminiChatHandler)
         status = llm_handler.get_status()
         
         # Check if this guild has chat enabled

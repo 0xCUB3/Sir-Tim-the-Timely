@@ -148,7 +148,7 @@ class ReminderSystem:
                 message = self._create_weekly_digest_message(urgent, coming_up, event_texts)
                 
                 # Prepare content with role ping if configured
-                content = f"<@&{self.reminder_role_id}> # Weekly Digest\n\n{message}" if self.reminder_role_id else f"# Weekly Digest\n\n{message}"
+                content = f"<@&{self.reminder_role_id}>\n# Weekly Digest\n\n{message}" if self.reminder_role_id else f"# Weekly Digest\n\n{message}"
                 
                 await self._broadcast_reminder(None, content)
                 logger.info(f"Sent weekly digest: {len(urgent)} urgent, {len(coming_up)} upcoming, {len(event_texts)} events")
@@ -263,13 +263,13 @@ class ReminderSystem:
                 days_until = (due_date.date() - datetime.now(self.default_timezone).date()).days
                 
                 if days_until == 0:
-                    time_text = "**TODAY**"
+                    date_text = f"**TODAY** ({due_date.strftime('%B %d')})"
                 elif days_until == 1:
-                    time_text = "**Tomorrow**"
+                    date_text = f"**Tomorrow** ({due_date.strftime('%B %d')})"
                 else:
-                    time_text = f"**{days_until} days**"
+                    date_text = f"**{due_date.strftime('%B %d')}**"
                 
-                message_parts.append(f"- {deadline['title']} - {time_text}")
+                message_parts.append(f"- {deadline['title']} - {date_text}")
             message_parts.append("")
         
         if coming_up:
@@ -446,9 +446,14 @@ class ReminderSystem:
                 )
                 embed.set_footer(text="Sir Tim the Timely • Test Reminder")
                 
+                # Prepare content with role ping if configured
+                content = "🧪 Test Reminder (No upcoming deadlines)"
+                if self.reminder_role_id:
+                    content = f"<@&{self.reminder_role_id}> {content}"
+                
                 await self.bot.rest.create_message(
                     channel_id,
-                    content="Test Reminder",
+                    content=content,
                     embed=embed
                 )
                 return True
@@ -493,9 +498,14 @@ class ReminderSystem:
             
             embed.set_footer(text="Sir Tim the Timely • Test Reminder")
             
+            # Prepare content with role ping if configured
+            content = "🧪 Test Reminder"
+            if self.reminder_role_id:
+                content = f"<@&{self.reminder_role_id}> {content}"
+            
             await self.bot.rest.create_message(
                 channel_id,
-                content="Test Reminder",
+                content=content,
                 embed=embed
             )
             

@@ -7,6 +7,7 @@ Implements admin commands for managing the bot and its settings.
 import logging
 from datetime import datetime, timezone
 import pytz
+from typing import Set
 
 import hikari
 import arc
@@ -22,17 +23,151 @@ logger = logging.getLogger("sir_tim.commands.admin")
 # Create a plugin for admin commands
 plugin = arc.GatewayPlugin("admin")
 
-# Define admin command group
-admin = plugin.include_slash_group("admin", "Administrative commands for bot management")
+# Admin role whitelist - stores role IDs that can use admin commands
+admin_role_whitelist: Set[int] = set()
+
+def is_admin_authorized(member: hikari.Member) -> bool:
+    """Check if a member is authorized to use admin commands."""
+    if not member:
+        return False
+    
+    # Check if user has administrator permissions
+    if member.permissions.ADMINISTRATOR:
+        return True
+    
+    # Check if user has any whitelisted roles
+    member_role_ids = {role.id for role in member.get_roles()}
+    return bool(admin_role_whitelist.intersection(member_role_ids))
+
+# Define admin command group with authorization check
+@arc.with_hook(arc.guild_only)
+async def admin_check(ctx: arc.GatewayContext) -> bool:
+    """Hook to check admin authorization before running commands."""
+    if not is_admin_authorized(ctx.member):
+        await ctx.respond("❌ You don't have permission to use admin commands.", flags=hikari.MessageFlag.EPHEMERAL)
+        return False
+    return True
+
+admin = plugin.include_slash_group("admin", "Administrative commands for bot management", hooks=[admin_check])
+
+@admin.include
+@arc.slash_subcommand("addrole", "Add a role to the admin whitelist")
+async def add_admin_role(
+    ctx: arc.GatewayContext,
+    role: arc.Option[hikari.Role, arc.RoleParams("Role to add to admin whitelist")]
+) -> None:
+    """Add a role to the admin command whitelist."""
+    # Only actual administrators can modify the whitelist
+    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
+        await ctx.respond("Only server administrators can modify the admin role whitelist.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+    
+    admin_role_whitelist.add(role.id)
+    
+    embed = hikari.Embed(
+        title="✅ Admin Role Added",
+        description=f"Role {role.mention} has been added to the admin whitelist.",
+        color=0x00FF00,
+        timestamp=datetime.now(timezone.utc)
+    )
+    
+    embed.add_field(
+        name="Permissions Granted",
+        value="Members with this role can now use all `/admin` commands.",
+        inline=False
+    )
+    
+    embed.set_footer(text="Sir Tim the Timely • Admin Panel")
+    await ctx.respond(embed=embed, flags=hikari.MessageFlag.EPHEMERAL)
+
+@admin.include
+@arc.slash_subcommand("removerole", "Remove a role from the admin whitelist")
+async def remove_admin_role(
+    ctx: arc.GatewayContext,
+    role: arc.Option[hikari.Role, arc.RoleParams("Role to remove from admin whitelist")]
+) -> None:
+    """Remove a role from the admin command whitelist."""
+    # Only actual administrators can modify the whitelist
+    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
+        await ctx.respond("Only server administrators can modify the admin role whitelist.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+    
+    if role.id in admin_role_whitelist:
+        admin_role_whitelist.remove(role.id)
+        
+        embed = hikari.Embed(
+            title="✅ Admin Role Removed",
+            description=f"Role {role.mention} has been removed from the admin whitelist.",
+            color=0xFF9900,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        embed.add_field(
+            name="Permissions Revoked",
+            value="Members with this role can no longer use `/admin` commands.",
+            inline=False
+        )
+        
+        embed.set_footer(text="Sir Tim the Timely • Admin Panel")
+        await ctx.respond(embed=embed, flags=hikari.MessageFlag.EPHEMERAL)
+    else:
+        await ctx.respond(f"Role {role.mention} is not in the admin whitelist.", flags=hikari.MessageFlag.EPHEMERAL)
+
+@admin.include
+@arc.slash_subcommand("listroles", "List all roles in the admin whitelist")
+async def list_admin_roles(ctx: arc.GatewayContext) -> None:
+    """List all roles in the admin command whitelist."""
+    if not admin_role_whitelist:
+        embed = hikari.Embed(
+            title="📋 Admin Role Whitelist",
+            description="No roles are currently whitelisted for admin commands.",
+            color=0x4285F4,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        embed.add_field(
+            name="Default Access",
+            value="Only users with Administrator permissions can use admin commands.",
+            inline=False
+        )
+    else:
+        role_mentions = []
+        for role_id in admin_role_whitelist:
+            try:
+                role = ctx.get_guild().get_role(role_id)
+                if role:
+                    role_mentions.append(role.mention)
+                else:
+                    role_mentions.append(f"<@&{role_id}> (role not found)")
+            except:
+                role_mentions.append(f"<@&{role_id}> (error)")
+        
+        embed = hikari.Embed(
+            title="📋 Admin Role Whitelist",
+            description="Roles that can use admin commands:",
+            color=0x4285F4,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        embed.add_field(
+            name="Whitelisted Roles",
+            value="\n".join(f"• {role}" for role in role_mentions),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Note",
+            value="Users with Administrator permissions always have access.",
+            inline=False
+        )
+    
+    embed.set_footer(text="Sir Tim the Timely • Admin Panel")
+    await ctx.respond(embed=embed, flags=hikari.MessageFlag.EPHEMERAL)
 
 @admin.include
 @arc.slash_subcommand("scrape", "Manually trigger deadline scraping")
 async def scrape_deadlines(ctx: arc.GatewayContext) -> None:
     """Manually trigger deadline scraping from MIT website."""
-    # Only allow server admins to use this command
-    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
-        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
-        return
     
     scraper = ctx.client.get_type_dependency(MITDeadlineScraper)
     
@@ -55,10 +190,6 @@ async def scrape_deadlines(ctx: arc.GatewayContext) -> None:
 @arc.slash_subcommand("reminderchannel", "Set the channel for daily reminders")
 async def set_reminder_channel(ctx: arc.GatewayContext) -> None:
     """Set the current channel for daily reminders."""
-    # Only allow server admins to use this command
-    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
-        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
-        return
     
     reminder_system = ctx.client.get_type_dependency(ReminderSystem)
     
@@ -95,9 +226,6 @@ async def add_deadline(
     is_critical: arc.Option[bool, arc.BoolParams("Is this a critical deadline?")] = False
 ) -> None:
     """Add a custom deadline to the database."""
-    # Only allow server admins to use this command
-    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
-        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
         return
     
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
@@ -135,9 +263,6 @@ async def add_deadline(
 @arc.slash_subcommand("testreminder", "Send a test reminder")
 async def test_reminder(ctx: arc.GatewayContext) -> None:
     """Send a test reminder to the current channel."""
-    # Only allow server admins to use this command
-    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
-        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
         return
     
     reminder_system = ctx.client.get_type_dependency(ReminderSystem)
@@ -160,9 +285,6 @@ async def test_reminder(ctx: arc.GatewayContext) -> None:
 @arc.slash_subcommand("status", "Show bot status information")
 async def status_info(ctx: arc.GatewayContext) -> None:
     """Show status information about the bot's components."""
-    # Only allow server admins to use this command
-    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
-        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
         return
     
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
@@ -182,7 +304,7 @@ async def status_info(ctx: arc.GatewayContext) -> None:
             title="📊 Sir Tim the Timely - Status",
             description="Current system status and statistics",
             color=0x00FF00,
-            timestamp=datetime.now()
+            timestamp=datetime.now(timezone.utc)
         )
         
         embed.add_field(
@@ -216,9 +338,6 @@ async def status_info(ctx: arc.GatewayContext) -> None:
 @arc.slash_subcommand("cleanup", "Clean up duplicate and old deadlines")
 async def cleanup_deadlines(ctx: arc.GatewayContext) -> None:
     """Clean up duplicate and old deadlines from the database."""
-    # Only allow server admins to use this command
-    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
-        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
         return
     
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
@@ -236,7 +355,7 @@ async def cleanup_deadlines(ctx: arc.GatewayContext) -> None:
             title="🧹 Deadline Cleanup Results",
             description="Database cleanup completed",
             color=0x00BFFF,
-            timestamp=datetime.now()
+            timestamp=datetime.now(timezone.utc)
         )
         
         embed.add_field(
@@ -284,9 +403,6 @@ async def cleanup_deadlines(ctx: arc.GatewayContext) -> None:
 @arc.slash_subcommand("mergedeadlines", "Merge two duplicate deadlines")
 async def merge_deadlines(ctx: arc.GatewayContext) -> None:
     """Merge two duplicate deadlines by keeping one and removing the other."""
-    # Only allow server admins to use this command
-    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
-        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
         return
     
     db_manager = ctx.client.get_type_dependency(DatabaseManager)
@@ -313,7 +429,7 @@ async def merge_deadlines(ctx: arc.GatewayContext) -> None:
                 title="✅ Deadlines Merged Successfully",
                 description="Merged duplicate deadlines",
                 color=0x00FF00,
-                timestamp=datetime.now()
+                timestamp=datetime.now(timezone.utc)
             )
             
             embed.add_field(
@@ -342,16 +458,14 @@ async def merge_deadlines(ctx: arc.GatewayContext) -> None:
 @arc.slash_subcommand("testdigest", "Send a test weekly digest")
 async def test_digest(ctx: arc.GatewayContext) -> None:
     """Send a test weekly digest to the current channel."""
-    # Only allow server admins to use this command
-    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
-        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
         return
     
     reminder_system = ctx.client.get_type_dependency(ReminderSystem)
     
-    await ctx.defer()
-    
     try:
+        # Defer immediately to prevent timeout
+        await ctx.defer(flags=hikari.MessageFlag.EPHEMERAL)
+        
         # Temporarily set this channel as a reminder channel
         original_channels = reminder_system.reminder_channels.copy()
         reminder_system.reminder_channels[ctx.guild_id] = ctx.channel_id
@@ -364,9 +478,18 @@ async def test_digest(ctx: arc.GatewayContext) -> None:
         
         await ctx.respond("✅ Test weekly digest sent successfully!", flags=hikari.MessageFlag.EPHEMERAL)
             
+    except NotFoundError:
+        logger.error("Discord interaction not found for testdigest")
+        return
+    except BadRequestError:
+        logger.error("Discord interaction already acknowledged for testdigest")
+        return
     except Exception as e:
         logger.error(f"Error sending test digest: {e}")
-        await ctx.respond(f"❌ Error sending test digest: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
+        try:
+            await ctx.respond(f"❌ Error sending test digest: {str(e)}", flags=hikari.MessageFlag.EPHEMERAL)
+        except (NotFoundError, BadRequestError):
+            pass
 
 @admin.include
 @arc.slash_subcommand("setrole", "Set the role to ping for reminders and digests")
@@ -375,9 +498,6 @@ async def set_reminder_role(
     role: arc.Option[hikari.Role, arc.RoleParams("Role to ping for reminders")]
 ) -> None:
     """Set the role to ping for reminders and weekly digests."""
-    # Only allow server admins to use this command
-    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
-        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
         return
     
     reminder_system = ctx.client.get_type_dependency(ReminderSystem)
@@ -396,9 +516,6 @@ async def set_reminder_role(
 @arc.slash_subcommand("testrant", "Send a test random rant")
 async def test_rant(ctx: arc.GatewayContext) -> None:
     """Send a test random rant to the current channel."""
-    # Only allow server admins to use this command
-    if not ctx.member or not ctx.member.permissions.ADMINISTRATOR:
-        await ctx.respond("This command can only be used by server administrators.", flags=hikari.MessageFlag.EPHEMERAL)
         return
     
     chat_handler = ctx.client.get_type_dependency(GeminiChatHandler)
