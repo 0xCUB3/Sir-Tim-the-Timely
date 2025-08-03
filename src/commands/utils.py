@@ -9,6 +9,9 @@ import functools
 import hikari
 import arc
 from hikari.errors import NotFoundError, BadRequestError
+from datetime import datetime
+import pytz
+from ..database import DatabaseManager
 
 logger = logging.getLogger("sir_tim.commands.utils")
 
@@ -65,7 +68,7 @@ async def set_timezone(ctx: arc.GatewayContext) -> None:
             title="⏰ Timezone Set",
             description=f"Your timezone has been set to **{timezone_str}**.",
             color=0x00BFFF,
-            timestamp=datetime.now(timezone.utc)
+            timestamp=datetime.now(pytz.UTC)
         )
         
         embed.add_field(
@@ -107,7 +110,7 @@ async def manage_preferences(ctx: arc.GatewayContext) -> None:
             title="⚙️ Preference Settings Updated",
             description="Your notification preferences have been updated.",
             color=0x00BFFF,
-            timestamp=datetime.now(timezone.utc)
+            timestamp=datetime.now(pytz.UTC)
         )
         
         embed.add_field(
@@ -139,7 +142,7 @@ async def about_bot(ctx: arc.GatewayContext) -> None:
             "informed about critical deadlines and orientation tasks."
         ),
         color=0x9B59B6,
-        timestamp=datetime.now(timezone.utc)
+        timestamp=datetime.now(pytz.UTC)
     )
     
     embed.add_field(
