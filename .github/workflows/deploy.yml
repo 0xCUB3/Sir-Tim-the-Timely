@@ -32,3 +32,8 @@ jobs:
         pkill -f "python3 main.py" || true
         nohup python3 main.py > bot.log 2>&1 &
         echo "Sir Tim bot started"
+
+    - name: Show Logs
+      run: |
+        cd ${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}
+        tail -n 50 bot.log
