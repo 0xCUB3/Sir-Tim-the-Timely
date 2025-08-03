@@ -1,3 +1,43 @@
+@admin.include
+@arc.slash_subcommand("testreminddm", "Test sending a DM reminder for a deadline to yourself immediately")
+async def test_remind_dm(
+    ctx: arc.GatewayContext,
+    deadline_id: arc.Option[int, arc.IntParams("ID of the deadline to test DM for")]
+) -> None:
+    """Admin-only: Test sending a DM reminder for a deadline immediately."""
+    # Check authorization
+    if not is_admin_authorized(ctx.member):
+        await ctx.respond("❌ You don't have permission to use admin commands.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+
+    db_manager = ctx.client.get_type_dependency(DatabaseManager)
+    deadlines = await db_manager.get_deadlines()
+    deadline = next((d for d in deadlines if d['id'] == deadline_id), None)
+
+    if not deadline:
+        await ctx.respond("❌ Deadline not found. Please check the ID and try again.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+
+    # Compose DM embed
+    due_date = deadline.get('due_date')
+    title = deadline.get('title', 'Untitled')
+    desc = deadline.get('description', '')
+    category = deadline.get('category', 'General')
+
+    embed = hikari.Embed(
+        title=f"⏰ Reminder: {title}",
+        description=f"Category: {category}\nDue: {due_date}\n\n{desc}",
+        color=0x00BFFF,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_footer(text="Sir Tim the Timely • DM Reminder Test")
+
+    try:
+        await ctx.rest.create_message(ctx.author.id, embed=embed)
+        await ctx.respond("✅ DM reminder sent! Check your Discord DMs.", flags=hikari.MessageFlag.EPHEMERAL)
+    except Exception as e:
+        logger.error(f"Error sending DM reminder: {e}")
+        await ctx.respond("❌ Failed to send DM. Make sure your DMs are open.", flags=hikari.MessageFlag.EPHEMERAL)
 """
 Admin Command Module for Sir Tim the Timely
 
