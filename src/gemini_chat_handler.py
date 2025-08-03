@@ -343,11 +343,15 @@ class GeminiChatHandler:
             # Adjust response chance for DMs (higher chance since it's direct interaction)
             chance = 0.85 if is_dm else self.response_chance
 
-            if f"<@{event.app.get_me().id}>" in event.content:
-                chance = 0.90 if is_dm else 0.80
-            deadline_keywords = ["deadline", "due", "when", "date", "submit", "help", "tim", "time"]
-            if any(keyword in event.content.lower() for keyword in deadline_keywords):
-                chance = min(chance + 0.15, 0.95) if is_dm else min(chance + 0.20, 0.75)
+            # Always respond if pinged or replied to
+            pinged = f"<@{event.app.get_me().id}>" in event.content
+            replied = hasattr(event, "message") and getattr(event.message, "referenced_message", None) is not None and getattr(event.message.referenced_message, "author", None) and getattr(event.message.referenced_message.author, "id", None) == event.app.get_me().id
+            if pinged or replied:
+                chance = 1.0
+            else:
+                deadline_keywords = ["deadline", "due", "when", "date", "submit", "help", "tim", "time"]
+                if any(keyword in event.content.lower() for keyword in deadline_keywords):
+                    chance = min(chance + 0.15, 0.95) if is_dm else min(chance + 0.20, 0.75)
 
             if random.random() > chance:
                 return

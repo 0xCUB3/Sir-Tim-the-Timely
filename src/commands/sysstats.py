@@ -28,6 +28,7 @@ async def sysstats(ctx: arc.GatewayContext) -> None:
     await ctx.defer()
     uname = platform.uname()
     cpu = cpuinfo.get_cpu_info()["brand_raw"] if cpuinfo else uname.processor
+    psutil.cpu_percent(interval=None)
     cpu_percent = psutil.cpu_percent(interval=1)
     mem = psutil.virtual_memory()
     boot_time = datetime.fromtimestamp(psutil.boot_time(), tz=timezone.utc)
