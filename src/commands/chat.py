@@ -21,7 +21,7 @@ import logging
 import hikari
 import arc
 
-import gemini_chat_handler
+from src import gemini_chat_handler
 
 logger = logging.getLogger("sir_tim.commands.chat")
 

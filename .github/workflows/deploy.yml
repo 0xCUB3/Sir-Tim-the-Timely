@@ -20,15 +20,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python 3.11 venv
+    - name: Install Python dependencies (system)
       run: |
         cd ${{ secrets.PI_BOT_PATH || '/home/skula/Sir-Tim-the-Timely' }}
-        if [ ! -d "venv" ]; then
-          python3.11 -m venv venv
-        fi
-        source venv/bin/activate
-        pip install --upgrade pip
-        pip install -r requirements.txt
+        python3 -m pip install --upgrade pip
+        python3 -m pip install -r requirements.txt
     
     - name: Deploy Sir Tim bot
       run: |
@@ -46,32 +42,27 @@ jobs:
         echo "Target directory: $BOT_DIR"
         cd "$BOT_DIR"
         echo "✅ Successfully navigated to bot directory"
-        # Step 2: Activate venv
+        # Step 2: Check for systemd service file
         echo ""
-        echo "🐍 STEP 2: Activating Python venv..."
-        source venv/bin/activate
-        echo "✅ venv activated"
-        # Step 3: Check for systemd service file
-        echo ""
-        echo "🔍 STEP 3: Checking for systemd service file..."
+        echo "🔍 STEP 2: Checking for systemd service file..."
         if [ ! -f "deployment/sir-tim-bot.service" ]; then
           echo "❌ Systemd service file 'deployment/sir-tim-bot.service' not found!"
           exit 1
         fi
-        # Step 4: Check current service status
+        # Step 3: Check current service status
         echo ""
-        echo "🔍 STEP 4: Checking current service status..."
-        if systemctl --user is-active --quiet sir-tim-bot; then
+        echo "🔍 STEP 3: Checking current service status..."
+        if systemctl is-active --quiet sir-tim-bot; then
           echo "🛑 Sir Tim bot service is currently running"
           echo "Stopping service..."
-          systemctl --user stop sir-tim-bot
+          sudo systemctl stop sir-tim-bot
           echo "✅ Service stopped successfully"
         else
           echo "ℹ️  Sir Tim bot service is not running"
         fi
-        # Step 5: Create backup
+        # Step 4: Create backup
         echo ""
-        echo "💾 STEP 5: Creating backup of current version..."
+        echo "💾 STEP 4: Creating backup of current version..."
         if [ -d "backup" ]; then 
           echo "Removing old backup..."
           rm -rf backup
@@ -80,9 +71,9 @@ jobs:
         echo "Backing up current files..."
         cp -r src bot.py main.py requirements.txt backup/ 2>/dev/null || echo "Some files not found, continuing..."
         echo "✅ Backup created successfully"
-        # Step 6: Pull latest changes
+        # Step 5: Pull latest changes
         echo ""
-        echo "📥 STEP 6: Pulling latest changes from GitHub..."
+        echo "📥 STEP 5: Pulling latest changes from GitHub..."
         echo "Current git status:"
         git status --porcelain
         echo "Fetching from origin..."
@@ -91,39 +82,39 @@ jobs:
         git reset --hard origin/main
         echo "Current commit: $(git rev-parse --short HEAD)"
         echo "✅ Successfully updated to latest version"
-        # Step 7: Start service
+        # Step 6: Start service
         echo ""
-        echo "🚀 STEP 7: Starting Sir Tim bot service..."
-        if systemctl --user start sir-tim-bot; then
+        echo "🚀 STEP 6: Starting Sir Tim bot service..."
+        if sudo systemctl start sir-tim-bot; then
           echo "Service start command issued, waiting for startup..."
           sleep 3
         else
           echo "❌ Failed to start sir-tim-bot.service: Unit sir-tim-bot.service not found."
           exit 1
         fi
-        # Step 8: Verify deployment
+        # Step 7: Verify deployment
         echo ""
-        echo "✅ STEP 8: Verifying deployment..."
-        if systemctl --user is-active --quiet sir-tim-bot; then
+        echo "✅ STEP 7: Verifying deployment..."
+        if systemctl is-active --quiet sir-tim-bot; then
           echo "🎉 SUCCESS! Sir Tim deployment completed successfully!"
           echo ""
           echo "Service status:"
-          systemctl --user status sir-tim-bot --no-pager -l
+          sudo systemctl status sir-tim-bot --no-pager -l
           echo ""
           echo "Recent logs:"
-          journalctl --user -u sir-tim-bot --no-pager -n 10
+          sudo journalctl -u sir-tim-bot --no-pager -n 10
         else
           echo "❌ FAILURE! Service failed to start"
           echo ""
           echo "Service status:"
-          systemctl --user status sir-tim-bot --no-pager -l
+          sudo systemctl status sir-tim-bot --no-pager -l
           echo ""
           echo "Recent error logs:"
-          journalctl --user -u sir-tim-bot --no-pager -n 20
+          sudo journalctl -u sir-tim-bot --no-pager -n 20
           echo ""
           echo "🔄 Rolling back to previous version..."
           cp -r backup/* . 2>/dev/null || echo "Backup restore failed"
-          systemctl --user start sir-tim-bot
+          sudo systemctl start sir-tim-bot
           echo "Rollback completed"
           exit 1
         fi
