@@ -391,21 +391,24 @@ class GeminiChatHandler:
 
             messages = history + [{"role": "user", "parts": [{"text": current_message}]}]
 
-            try:
-                async with event.app.rest.trigger_typing(event.channel_id):
-                    response = await self.generate_response(messages)
-                    if response: # Ensure response is not empty
-                        # For DMs, respond directly; for guild channels, reply to the message
-                        if is_dm:
-                            await event.app.rest.create_message(event.channel_id, response)
-                        else:
-                            await event.message.respond(
-                                response,
-                                reply=event.message,
-                                mentions_reply=False
-                            )
-            except Exception as e:
-                logger.error(f"Failed to send chat response: {e}")
+            async def send_response():
+                try:
+                    async with event.app.rest.trigger_typing(event.channel_id):
+                        response = await self.generate_response(messages)
+                        if response:
+                            if is_dm:
+                                await event.app.rest.create_message(event.channel_id, response)
+                            else:
+                                await event.message.respond(
+                                    response,
+                                    reply=event.message,
+                                    mentions_reply=False
+                                )
+                except Exception as e:
+                    logger.error(f"Failed to send chat response: {e}")
+
+            # Run the response in a separate asyncio task to avoid blocking
+            asyncio.create_task(send_response())
 
     async def _start_inactivity_monitor(self):
         """Monitor channels for inactivity and send random rants."""
