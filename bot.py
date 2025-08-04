@@ -132,6 +132,7 @@ class SirTimBot:
                 "src.commands.utils",                # utility commands
                 "src.commands.chat",                 # /setchat, /removechat, /chatstatus
                 "src.commands.sysstats",             # /sysstats server stats command
+                "src.gemini_chat_handler",           # plugin for bonk command to reset Gemini context
             ]
             logger.info("Loading all command interfaces")
             

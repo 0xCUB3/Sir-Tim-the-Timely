@@ -13,6 +13,8 @@ from typing import Dict, Any
 from datetime import datetime, timezone
 
 import hikari
+import arc
+
 try:
     import google.generativeai as genai
     from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -63,9 +65,35 @@ You're not here to be nice. You're here to keep MIT students on track through pu
 However, if someone genuinely asks for help or guidance, you can drop the sarcasm and offer a short, direct, and actually useful answer. Cooperation is allowed if it helps someone succeed at MIT.
 """
 
-class GeminiChatHandler:
-    """Handles text generation using the Gemini API."""
 
+
+
+    
+    # Plugin for Gemini commands
+plugin = arc.GatewayPlugin("gemini")
+
+@plugin.include
+@arc.slash_command("bonk", "Reset Gemini cache and context (admin only)")
+async def bonk(ctx: arc.GatewayContext) -> None:
+    """Slash command to reset GeminiChatHandler cache/context."""
+    # Retrieve the GeminiChatHandler instance injected in bot.py
+    handler = ctx.client.get_type_dependency(GeminiChatHandler)
+    if not handler:
+        await ctx.respond("GeminiChatHandler not found.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+    await handler.reset_context()
+    await ctx.respond("Ow")
+
+@arc.loader
+def load(client: arc.GatewayClient) -> None:
+    client.add_plugin(plugin)
+
+@arc.unloader
+def unload(client: arc.GatewayClient) -> None:
+    client.remove_plugin(plugin)
+
+
+class GeminiChatHandler:
     def __init__(self, api_key: str, db_manager: DatabaseManager, bot: hikari.GatewayBot = None, **kwargs):
         """Initialize the Gemini Chat handler."""
         if not GEMINI_AVAILABLE:
@@ -81,10 +109,10 @@ class GeminiChatHandler:
         self.last_activity: Dict[int, float] = {}  # Channel ID -> last activity timestamp
         self.random_rant_sent: Dict[int, bool] = {}  # Channel ID -> whether rant was sent
         self.inactivity_threshold = 3600  # 1 hour in seconds
+        self._fresh_thread = False  # Flag to ignore history for the next message (fresh thread)
 
         # Concurrency control: lock per channel/guild to prevent context mixups
         self._context_locks: Dict[int, asyncio.Lock] = {}
-        
         # Cache for deadline data to avoid frequent DB hits
         self._deadline_cache: Dict[str, Any] = {}
         self._deadline_cache_timestamp = 0
@@ -113,6 +141,17 @@ class GeminiChatHandler:
         if self.db_manager:
             asyncio.create_task(self._load_chat_channels())
             asyncio.create_task(self._start_inactivity_monitor())
+
+    async def reset_context(self):
+        """Completely clear cache and context for Gemini."""
+        self._deadline_cache.clear()
+        self._deadline_cache_timestamp = 0
+        self._context_locks.clear()
+        self.cooldown.clear()
+        self.last_activity.clear()
+        self.random_rant_sent.clear()
+        self._fresh_thread = True  # Next message should start a fresh thread without history
+        logger.info("GeminiChatHandler context and cache reset.")
 
     def _blocking_chat_request(self, messages) -> str:
         """Synchronous function that makes an API request to Gemini with message history."""
@@ -361,35 +400,39 @@ class GeminiChatHandler:
             # Get deadline context if relevant
             deadline_context = await self._get_deadline_context(event.content)
 
-            # Fetch last 20 messages from the channel for context
-            history = []
-            try:
-                count = 0
-                # Fetch messages and build history
-                async for msg in event.app.rest.fetch_messages(event.channel_id):
-                    if msg.content:
-                        # Assign 'model' role for bot's own messages, 'user' for others
-                        role = "model" if msg.author.is_bot else "user"
-                        history.append({"role": role, "parts": [{"text": msg.content}]})
-                        count += 1
-                        if count >= 20: # Limit to the last 20 messages
-                            break
-                history.reverse() # Reverse to chronological order (oldest first)
-            except Exception as e:
-                logger.error(f"Failed to fetch message history: {e}")
+            # Fetch or skip history based on fresh_thread flag
+            if self._fresh_thread:
                 history = []
+                self._fresh_thread = False
+            else:
+                history = []
+                try:
+                    count = 0
+                    # Fetch messages and build history
+                    async for msg in event.app.rest.fetch_messages(event.channel_id):
+                        if msg.content:
+                            # Assign 'model' role for bot's own messages, 'user' for others
+                            role = "model" if msg.author.is_bot else "user"
+                            history.append({"role": role, "parts": [{"text": msg.content}]})
+                            count += 1
+                            if count >= 20:  # Limit to the last 20 messages
+                                break
+                    history.reverse()  # Reverse to chronological order (oldest first)
+                except Exception as e:
+                    logger.error(f"Failed to fetch message history: {e}")
+                    history = []
 
             # Construct the message list for the API
-            # Include deadline context in the current message if relevant
-            current_message = event.content
+            user_text = event.content
             if deadline_context:
-                current_message = f"{deadline_context} {event.content}"
-
-            # Only add DM context for true DMs (not in a guild channel)
-            if is_dm and guild_id is None:
-                current_message = f"[DM CONTEXT: User is messaging Tim privately] {current_message}"
-
-            messages = history + [{"role": "user", "parts": [{"text": current_message}]}]
+                user_text = f"{deadline_context} {event.content}"
+            # Build base messages: system message for DM context, then history
+            messages = []
+            if is_dm:
+                messages.append({"role": "system", "parts": [{"text": "User is messaging Tim privately"}]})
+            messages.extend(history)
+            # Add the current user message
+            messages.append({"role": "user", "parts": [{"text": user_text}]})
 
             async def send_response():
                 try:
