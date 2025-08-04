@@ -426,10 +426,10 @@ class GeminiChatHandler:
             user_text = event.content
             if deadline_context:
                 user_text = f"{deadline_context} {event.content}"
-            # Build base messages: system message for DM context, then history
+            # Build base messages: DM context as user role, then history
             messages = []
             if is_dm:
-                messages.append({"role": "system", "parts": [{"text": "User is messaging Tim privately"}]})
+                messages.append({"role": "user", "parts": [{"text": "User is messaging Tim privately"}]})
             messages.extend(history)
             # Add the current user message
             messages.append({"role": "user", "parts": [{"text": user_text}]})
