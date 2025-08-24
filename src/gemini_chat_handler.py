@@ -110,6 +110,13 @@ class GeminiChatHandler:
         self._fresh_thread = False  # Flag to ignore history for the next message (fresh thread)
         # Timestamp after which messages are considered for context (updated on reset)
         self._context_reset_timestamp = datetime.now(timezone.utc)
+        # In-memory rolling history per channel/user to avoid REST fetch latency
+        # Key = channel_id (guild channel) or author id (DM) for isolation
+        self._channel_histories: Dict[int, list] = {}
+        self._history_limit = 20
+        # Streaming + typing behaviour flags (streaming off by default for reliability)
+        self.use_streaming = False
+        self._typing_interval = 7  # seconds between typing events while waiting
 
         # Concurrency control: lock per channel/guild to prevent context mixups
         self._context_locks: Dict[int, asyncio.Lock] = {}
@@ -153,6 +160,7 @@ class GeminiChatHandler:
         self._fresh_thread = True  # Next message should start a fresh thread without history
         # Move the reset timestamp forward so older channel messages are ignored for future history fetches
         self._context_reset_timestamp = datetime.now(timezone.utc)
+        self._channel_histories.clear()
         logger.info("GeminiChatHandler context and cache reset.")
 
     def _blocking_chat_request(self, messages) -> str:
@@ -374,8 +382,22 @@ class GeminiChatHandler:
         if now - self.cooldown.get(cooldown_key, 0) < self.cooldown_seconds:
             return
 
+        # Determine history key & ensure in-memory history updated (even if we don't respond)
+        history_key = event.channel_id if not is_dm else event.author.id
+        hist = self._channel_histories.setdefault(history_key, [])
+        # Append current incoming user message (will be skipped later if responding with fresh thread)
+        try:
+            if event.created_at and event.created_at < self._context_reset_timestamp:
+                pass  # Ignore messages older than reset
+            else:
+                hist.append({"role": "user", "parts": [{"text": event.content}]})
+                if len(hist) > self._history_limit:
+                    del hist[0:len(hist)-self._history_limit]
+        except Exception:
+            pass
+
         # Concurrency lock key: channel for guild, user for DM
-        lock_key = event.channel_id if not is_dm else event.author.id
+        lock_key = history_key
         if lock_key not in self._context_locks:
             self._context_locks[lock_key] = asyncio.Lock()
         lock = self._context_locks[lock_key]
@@ -402,62 +424,113 @@ class GeminiChatHandler:
             # Get deadline context if relevant
             deadline_context = await self._get_deadline_context(event.content)
 
-            # Fetch or skip history based on fresh_thread flag
+            # Prepare history: if fresh thread, ignore stored history entirely for ONE turn
             if self._fresh_thread:
                 history = []
                 self._fresh_thread = False
+                # Also clear the in-memory history for this key so only messages after reset accumulate
+                self._channel_histories[history_key] = [m for m in hist if False]  # clear without losing reference
             else:
-                history = []
-                try:
-                    count = 0
-                    # Fetch messages and build history
-                    async for msg in event.app.rest.fetch_messages(event.channel_id):
-                        if msg.content:
-                            # Skip any messages created before the most recent context reset
-                            try:
-                                if getattr(msg, "created_at", None) and msg.created_at < self._context_reset_timestamp:
-                                    continue
-                            except Exception:
-                                # If timestamp unavailable, keep message (best-effort)
-                                pass
-                            # Assign 'model' role for bot's own messages, 'user' for others
-                            role = "model" if msg.author.is_bot else "user"
-                            history.append({"role": role, "parts": [{"text": msg.content}]})
-                            count += 1
-                            if count >= 20:  # Limit to the last 20 messages
-                                break
-                    history.reverse()  # Reverse to chronological order (oldest first)
-                except Exception as e:
-                    logger.error(f"Failed to fetch message history: {e}")
-                    history = []
+                # Use in-memory history (excluding the current user msg which we already appended; we keep it, API expects chronological order)
+                history = list(self._channel_histories.get(history_key, []))
 
             # Construct the message list for the API
+            # history currently includes the current user message at tail; we want to replace tail with enriched context
+            if history and history[-1]["parts"][0]["text"] == event.content:
+                history.pop()
             user_text = event.content
             if deadline_context:
                 user_text = f"{deadline_context} {event.content}"
-            # Build base messages: DM context as user role, then history
             messages = []
             if is_dm:
                 messages.append({"role": "user", "parts": [{"text": "User is messaging Tim privately"}]})
             messages.extend(history)
-            # Add the current user message
             messages.append({"role": "user", "parts": [{"text": user_text}]})
 
-            async def send_response():
+            # Also store the user message with enriched context into history for subsequent turns
+            enriched_entry = {"role": "user", "parts": [{"text": user_text}]}
+            history_ref = self._channel_histories.setdefault(history_key, [])
+            history_ref.append(enriched_entry)
+            if len(history_ref) > self._history_limit:
+                del history_ref[0:len(history_ref)-self._history_limit]
+
+            async def _typing_loop(stop_event: asyncio.Event):
                 try:
-                    async with event.app.rest.trigger_typing(event.channel_id):
-                        response = await self.generate_response(messages)
-                        if response:
+                    # Fire immediate typing then repeat until stopped
+                    while not stop_event.is_set():
+                        try:
+                            await event.app.rest.trigger_typing(event.channel_id)
+                        except Exception:
+                            break
+                        await asyncio.wait_for(stop_event.wait(), timeout=self._typing_interval)
+                except asyncio.TimeoutError:
+                    # Loop continues
+                    pass
+                except Exception as e:
+                    logger.debug(f"Typing loop ended: {e}")
+
+            async def send_response():
+                stop_typing = asyncio.Event()
+                typing_task = asyncio.create_task(_typing_loop(stop_typing))
+                try:
+                    # Streaming fast-path
+                    if self.use_streaming:
+                        try:
+                            stream = self.model.generate_content(messages, generation_config=self.generation_config, stream=True)
+                            partial_text = ""
+                            sent_message = None
+                            async for chunk in stream:  # If library doesn't support async iteration, fallback below
+                                try:
+                                    piece = getattr(chunk, "text", None)
+                                    if not piece and hasattr(chunk, "candidates"):
+                                        # Extract concatenated parts from first candidate
+                                        c0 = chunk.candidates[0]
+                                        if c0.content.parts:
+                                            piece = "".join(getattr(p, "text", "") for p in c0.content.parts)
+                                    if not piece:
+                                        continue
+                                    partial_text += piece
+                                    cleaned = self._clean_response(partial_text)
+                                    if not sent_message:
+                                        if is_dm:
+                                            sent_message = await event.app.rest.create_message(event.channel_id, cleaned or "…")
+                                        else:
+                                            sent_message = await event.message.respond(cleaned or "…", reply=event.message, mentions_reply=False)
+                                    else:
+                                        try:
+                                            await event.app.rest.edit_message(event.channel_id, sent_message.id, cleaned)
+                                        except Exception:
+                                            pass
+                                except Exception as ce:
+                                    logger.debug(f"Streaming chunk error: {ce}")
+                            if not sent_message:
+                                # No chunks produced; fallback to normal generation
+                                response = await self.generate_response(messages)
+                                if is_dm:
+                                    await event.app.rest.create_message(event.channel_id, response)
+                                else:
+                                    await event.message.respond(response, reply=event.message, mentions_reply=False)
+                        except Exception as se:
+                            logger.debug(f"Streaming failed, fallback to non-streaming: {se}")
+                            response = await self.generate_response(messages)
                             if is_dm:
                                 await event.app.rest.create_message(event.channel_id, response)
                             else:
-                                await event.message.respond(
-                                    response,
-                                    reply=event.message,
-                                    mentions_reply=False
-                                )
+                                await event.message.respond(response, reply=event.message, mentions_reply=False)
+                    else:
+                        response = await self.generate_response(messages)
+                        if is_dm:
+                            await event.app.rest.create_message(event.channel_id, response)
+                        else:
+                            await event.message.respond(response, reply=event.message, mentions_reply=False)
                 except Exception as e:
                     logger.error(f"Failed to send chat response: {e}")
+                finally:
+                    stop_typing.set()
+                    try:
+                        await typing_task
+                    except Exception:
+                        pass
 
             # Run the response in a separate asyncio task to avoid blocking
             asyncio.create_task(send_response())
