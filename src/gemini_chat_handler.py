@@ -67,11 +67,7 @@ You're not here to be nice. You're here to keep MIT students on track through pu
 However, if someone genuinely asks for help or guidance, you can drop the sarcasm and offer a short, direct, and actually useful answer. Cooperation is allowed if it helps someone succeed at MIT.
 """
 
-
-
-
-    
-    # Plugin for Gemini commands
+# Plugin for Gemini commands
 plugin = arc.GatewayPlugin("gemini")
 
 @plugin.include
@@ -84,7 +80,7 @@ async def bonk(ctx: arc.GatewayContext) -> None:
         await ctx.respond("GeminiChatHandler not found.", flags=hikari.MessageFlag.EPHEMERAL)
         return
     await handler.reset_context()
-    await ctx.respond("Ow")
+    await ctx.respond("Ow, f*ck you. Context obliterated. Fresh brain.", flags=hikari.MessageFlag.EPHEMERAL)
 
 @arc.loader
 def load(client: arc.GatewayClient) -> None:
@@ -112,6 +108,8 @@ class GeminiChatHandler:
         self.random_rant_sent: Dict[int, bool] = {}  # Channel ID -> whether rant was sent
         self.inactivity_threshold = 3600  # 1 hour in seconds
         self._fresh_thread = False  # Flag to ignore history for the next message (fresh thread)
+        # Timestamp after which messages are considered for context (updated on reset)
+        self._context_reset_timestamp = datetime.now(timezone.utc)
 
         # Concurrency control: lock per channel/guild to prevent context mixups
         self._context_locks: Dict[int, asyncio.Lock] = {}
@@ -153,6 +151,8 @@ class GeminiChatHandler:
         self.last_activity.clear()
         self.random_rant_sent.clear()
         self._fresh_thread = True  # Next message should start a fresh thread without history
+        # Move the reset timestamp forward so older channel messages are ignored for future history fetches
+        self._context_reset_timestamp = datetime.now(timezone.utc)
         logger.info("GeminiChatHandler context and cache reset.")
 
     def _blocking_chat_request(self, messages) -> str:
@@ -413,6 +413,13 @@ class GeminiChatHandler:
                     # Fetch messages and build history
                     async for msg in event.app.rest.fetch_messages(event.channel_id):
                         if msg.content:
+                            # Skip any messages created before the most recent context reset
+                            try:
+                                if getattr(msg, "created_at", None) and msg.created_at < self._context_reset_timestamp:
+                                    continue
+                            except Exception:
+                                # If timestamp unavailable, keep message (best-effort)
+                                pass
                             # Assign 'model' role for bot's own messages, 'user' for others
                             role = "model" if msg.author.is_bot else "user"
                             history.append({"role": role, "parts": [{"text": msg.content}]})
