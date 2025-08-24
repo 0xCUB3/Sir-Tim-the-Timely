@@ -9,6 +9,7 @@ asynchronous event loop.
 import logging
 import asyncio
 import random
+import re
 from typing import Dict, Any
 from datetime import datetime, timezone
 
@@ -263,18 +264,72 @@ class GeminiChatHandler:
 
     def _clean_response(self, text: str) -> str:
         """Cleans the model's response."""
-        cleaned_text = text.strip()
-        if cleaned_text.startswith('"') and cleaned_text.endswith('"'):
-            cleaned_text = cleaned_text[1:-1]
-        for prefix in ["tim:", "tim says:", "tim: ", "as tim, ", "i would say:"]:
-            if cleaned_text.lower().startswith(prefix):
-                cleaned_text = cleaned_text[len(prefix):].strip()
-        
-        # 85% chance to make it lowercase, 15% chance to keep original case
+        if not text:
+            return ""
+
+        cleaned = text.strip()
+
+        # Remove enclosing quotes
+        if cleaned.startswith('"') and cleaned.endswith('"'):
+            cleaned = cleaned[1:-1].strip()
+
+        # Strip any leaked system/personality prompt fragments
+        prompt_markers = [
+            "You are Sir Tim the Timely",
+            "NEVER output <think>",
+            "DEADLINE ROASTING EXAMPLES:",
+            "Key behaviors:",
+            "You're not here to be nice.",
+        ]
+
+        # Remove XML-ish meta tags like <think>, <thinking>, <system> (and their closing counterparts) with contents
+        tag_pattern = re.compile(r"<(?:think|thinking|system)[^>]*>.*?</(?:think|thinking|system)>", re.IGNORECASE | re.DOTALL)
+        cleaned = re.sub(tag_pattern, "", cleaned)
+        # Also remove standalone tags if any
+        cleaned = re.sub(r"</?(?:think|thinking|system)[^>]*>", "", cleaned, flags=re.IGNORECASE)
+
+        # If entire personality prompt leaked (heuristic: contains first marker & a large proportion of markers) -> fallback
+        leak_mark_count = sum(1 for m in prompt_markers if m.lower() in cleaned.lower())
+        if leak_mark_count >= 2:
+            cleaned = "brain static. recalibrated. try again."  # Safe fallback
+
+        # Remove any lines that look like instructions (second heuristic)
+        filtered_lines = []
+        for line in cleaned.splitlines():
+            low = line.lower().strip()
+            if not low:
+                continue
+            if any(m.lower() in low for m in prompt_markers):
+                continue
+            if low.startswith("you are ") and len(low.split()) < 15:
+                continue
+            if low.startswith("system:"):
+                continue
+            filtered_lines.append(line)
+        if filtered_lines:
+            cleaned = " ".join(filtered_lines)
+
+        # Remove any leftover multiple spaces
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+        # Drop leading role-like prefixes
+        for prefix in ["tim:", "tim says:", "tim: ", "as tim, ", "i would say:", "assistant:"]:
+            if cleaned.lower().startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip()
+
+        # Hard length guard to avoid dumping long leaked content unless a long answer was explicitly requested
+        if len(cleaned) > 400:
+            cleaned = cleaned[:400].rstrip() + "…"
+
+        # Ensure not empty after cleaning
+        if not cleaned:
+            cleaned = "malfunction avoided. say it simpler."
+
+        # Stylize: 85% chance force lowercase (as before)
         if random.random() < 0.85:
-            return cleaned_text.lower()
-        else:
-            return cleaned_text
+            cleaned = cleaned.lower()
+
+        return cleaned
 
     async def _get_deadline_context(self, message_content: str) -> str:
         """Get relevant deadline context based on message content."""
