@@ -282,11 +282,14 @@ class GeminiChatHandler:
             "You're not here to be nice.",
         ]
 
-        # Remove XML-ish meta tags like <think>, <thinking>, <system> (and their closing counterparts) with contents
-        tag_pattern = re.compile(r"<(?:think|thinking|system)[^>]*>.*?</(?:think|thinking|system)>", re.IGNORECASE | re.DOTALL)
-        cleaned = re.sub(tag_pattern, "", cleaned)
-        # Also remove standalone tags if any
-        cleaned = re.sub(r"</?(?:think|thinking|system)[^>]*>", "", cleaned, flags=re.IGNORECASE)
+        # Remove <think>/<thinking>/<system> tags and their contents, even if multiline or at start/end
+        cleaned = re.sub(r"<\s*(think|thinking|system)[^>]*>.*?<\s*/\s*\1\s*>", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+        # Remove any remaining standalone tags
+        cleaned = re.sub(r"<\s*/?\s*(think|thinking|system)[^>]*>", "", cleaned, flags=re.IGNORECASE)
+
+        # If after cleaning, nothing but whitespace or dashes remains, fallback
+        if not cleaned.strip() or re.fullmatch(r"[-\s]*", cleaned):
+            cleaned = "malfunction avoided. say it simpler."
 
         # If entire personality prompt leaked (heuristic: contains first marker & a large proportion of markers) -> fallback
         leak_mark_count = sum(1 for m in prompt_markers if m.lower() in cleaned.lower())
