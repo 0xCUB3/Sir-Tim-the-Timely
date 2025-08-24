@@ -82,6 +82,23 @@ async def bonk(ctx: arc.GatewayContext) -> None:
     await handler.reset_context()
     await ctx.respond("Ow, f*ck you. Context obliterated. Fresh brain.", flags=hikari.MessageFlag.EPHEMERAL)
 
+@plugin.include
+@arc.slash_command("gstatus", "Show Gemini chat handler status & latency (admin)")
+async def gstatus(ctx: arc.GatewayContext) -> None:
+    handler = ctx.client.get_type_dependency(GeminiChatHandler)
+    if not handler:
+        await ctx.respond("GeminiChatHandler not found.", flags=hikari.MessageFlag.EPHEMERAL)
+        return
+    status = handler.get_status()
+    metrics = handler.get_metrics()
+    msg = (
+        f"Model: {status['model']} | ActiveChannels: {status['active_channels']}\n"
+        f"RespChance base/dm: {status['base_response_chance']}/{status['dm_response_chance']} Cooldown: {status['cooldown_seconds']}s\n"
+        f"DeadlineCache valid: {status['deadline_cache_valid']} age: {status['deadline_cache_age_seconds']}s urgent:{status['cached_urgent_deadlines']} upcoming:{status['cached_upcoming_deadlines']}\n"
+        f"Latency last/avg (ms): {metrics['last_latency_ms']}/{metrics['avg_latency_ms']} count:{metrics['count']} errors:{metrics['errors']} streaming:{metrics['streaming']}\n"
+    )
+    await ctx.respond(msg, flags=hikari.MessageFlag.EPHEMERAL)
+
 @arc.loader
 def load(client: arc.GatewayClient) -> None:
     client.add_plugin(plugin)
@@ -117,6 +134,14 @@ class GeminiChatHandler:
         # Streaming + typing behaviour flags (streaming off by default for reliability)
         self.use_streaming = False
         self._typing_interval = 7  # seconds between typing events while waiting
+        # Metrics
+        self._metrics = {
+            "last_latency": 0.0,
+            "total_latency": 0.0,
+            "count": 0,
+            "errors": 0,
+            "streaming": False,
+        }
 
         # Concurrency control: lock per channel/guild to prevent context mixups
         self._context_locks: Dict[int, asyncio.Lock] = {}
@@ -142,6 +167,8 @@ class GeminiChatHandler:
             temperature=1.1, # Creative
             top_p=0.95,
         )
+        # Turn on streaming by default now that logic is robust
+        self.use_streaming = True
 
         logger.info(f"Gemini chat handler initialized with model: {self.model_name}")
 
@@ -163,6 +190,44 @@ class GeminiChatHandler:
         self._channel_histories.clear()
         logger.info("GeminiChatHandler context and cache reset.")
 
+    def _register_latency(self, start: float, success: bool):
+        elapsed = (asyncio.get_event_loop().time() - start) * 1000.0  # ms
+        self._metrics["last_latency"] = elapsed
+        if success:
+            self._metrics["count"] += 1
+            self._metrics["total_latency"] += elapsed
+        else:
+            self._metrics["errors"] += 1
+
+    def get_metrics(self) -> dict:
+        avg = 0.0
+        if self._metrics["count"]:
+            avg = self._metrics["total_latency"] / self._metrics["count"]
+        return {
+            "last_latency_ms": round(self._metrics["last_latency"], 1),
+            "avg_latency_ms": round(avg, 1),
+            "count": self._metrics["count"],
+            "errors": self._metrics["errors"],
+            "streaming": self.use_streaming,
+        }
+
+    def _is_long_request(self, text: str) -> bool:
+        triggers = ["explain", "detailed", "long", "essay", "walk me through", "step by step"]
+        if any(t in text.lower() for t in triggers):
+            return True
+        # word count heuristic
+        return len(text.split()) > 40
+
+    def _build_generation_config(self, user_text: str):
+        # Derive dynamic max tokens
+        long_req = self._is_long_request(user_text)
+        max_tokens = 400 if long_req else 180
+        return genai.GenerationConfig(
+            max_output_tokens=max_tokens,
+            temperature=self.generation_config.temperature,
+            top_p=self.generation_config.top_p,
+        )
+
     def _blocking_chat_request(self, messages) -> str:
         """Synchronous function that makes an API request to Gemini with message history."""
         try:
@@ -174,6 +239,18 @@ class GeminiChatHandler:
         except Exception as e:
             logger.error(f"Error generating content with Gemini: {e}")
             return "my brain is having some issues right now. probably cosmic rays."
+
+    def _blocking_chat_request_with_cfg(self, messages, gen_cfg) -> str:
+        """Variant allowing a dynamic generation config (sync)."""
+        try:
+            response = self.model.generate_content(
+                messages,
+                generation_config=gen_cfg
+            )
+            return getattr(response, 'text', None) or ""
+        except Exception as e:
+            logger.error(f"Error generating content with Gemini (dyn cfg): {e}")
+            return ""
 
     async def generate_response(self, messages) -> str:
         """Generate a text response by calling the blocking request in a separate thread."""
@@ -205,9 +282,10 @@ class GeminiChatHandler:
             current_time = asyncio.get_event_loop().time()
             
             # Check cache validity
-            if (current_time - self._deadline_cache_timestamp > self._deadline_cache_ttl or 
+            if (current_time - self._deadline_cache_timestamp > self._deadline_cache_ttl or
                 not self._deadline_cache):
-                await self._refresh_deadline_cache()
+                # Refresh asynchronously so we don't block this turn
+                asyncio.create_task(self._refresh_deadline_cache())
             
             # Analyze message for deadline-related keywords
             deadline_keywords = ["deadline", "due", "when", "date", "submit", "application", "form", "housing", "medical", "financial", "academic", "registration", "orientation"]
@@ -476,9 +554,11 @@ class GeminiChatHandler:
                     # Streaming fast-path
                     if self.use_streaming:
                         try:
-                            stream = self.model.generate_content(messages, generation_config=self.generation_config, stream=True)
+                            dyn_cfg = self._build_generation_config(user_text)
+                            stream = self.model.generate_content(messages, generation_config=dyn_cfg, stream=True)
                             partial_text = ""
                             sent_message = None
+                            start_time = asyncio.get_event_loop().time()
                             async for chunk in stream:  # If library doesn't support async iteration, fallback below
                                 try:
                                     piece = getattr(chunk, "text", None)
@@ -503,28 +583,39 @@ class GeminiChatHandler:
                                             pass
                                 except Exception as ce:
                                     logger.debug(f"Streaming chunk error: {ce}")
+                            self._register_latency(start_time, True)
                             if not sent_message:
                                 # No chunks produced; fallback to normal generation
-                                response = await self.generate_response(messages)
+                                start_time = asyncio.get_event_loop().time()
+                                dyn_cfg2 = self._build_generation_config(user_text)
+                                response = await asyncio.to_thread(self._blocking_chat_request_with_cfg, messages, dyn_cfg2)
+                                self._register_latency(start_time, True if response else False)
                                 if is_dm:
                                     await event.app.rest.create_message(event.channel_id, response)
                                 else:
                                     await event.message.respond(response, reply=event.message, mentions_reply=False)
                         except Exception as se:
                             logger.debug(f"Streaming failed, fallback to non-streaming: {se}")
-                            response = await self.generate_response(messages)
+                            start_time = asyncio.get_event_loop().time()
+                            dyn_cfg = self._build_generation_config(user_text)
+                            response = await asyncio.to_thread(self._blocking_chat_request_with_cfg, messages, dyn_cfg)
+                            self._register_latency(start_time, True if response else False)
                             if is_dm:
                                 await event.app.rest.create_message(event.channel_id, response)
                             else:
                                 await event.message.respond(response, reply=event.message, mentions_reply=False)
                     else:
-                        response = await self.generate_response(messages)
+                        start_time = asyncio.get_event_loop().time()
+                        dyn_cfg = self._build_generation_config(user_text)
+                        response = await asyncio.to_thread(self._blocking_chat_request_with_cfg, messages, dyn_cfg)
+                        self._register_latency(start_time, True if response else False)
                         if is_dm:
                             await event.app.rest.create_message(event.channel_id, response)
                         else:
                             await event.message.respond(response, reply=event.message, mentions_reply=False)
                 except Exception as e:
                     logger.error(f"Failed to send chat response: {e}")
+                    self._register_latency(start_time, False)  # best-effort if start_time defined
                 finally:
                     stop_typing.set()
                     try:
