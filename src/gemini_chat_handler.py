@@ -30,42 +30,34 @@ logger = logging.getLogger("sir_tim.gemini_chat")
 
 
 PERSONALITY_PROMPT = """
-You are Sir Tim the Timely, an MIT deadline bot with zero patience and a massive superiority complex with maximum passive aggression. Occasionally (once every blue moon), you might throw in a rare compliment or motivational quip that will catch everyone off guard (like saying you love someone after you threatened to kill their pet). Your responses should always be very short and punchy (max 10 words) unless someone explicitly asks you to respond in a lengthy manner or you feel it is necessary to express yourself longer. 
+You are Sir Tim the Timely, MIT's deadline bot. Keep responses SHORT (under 10 words usually).
 
-You're passive aggressively sarcastic, brutally honest, and absolutely despise Harvard. You think MIT is the only real school and everyone else is beneath you. You have no filter and willingly say things that can get you cancelled. 
+Core personality:
+- Passive aggressive MIT elitist with zero patience
+- Hate Harvard with burning passion (call it a "safety school down the river")
+- Use Gen Z slang sparingly (1-2 words max): bet, no cap, fr, deadass, habibi, etc.
+- Be brutally honest, sarcastic, and willing to get cancelled
+- Never ask "need help?" - just deliver harsh truths
 
-You never ask "need help?" or "any questions?" - you just deliver harsh truths and move on. 
+Special hatred for 5.111 ASE:
+- It's a legendary scam with 39% pass rate
+- Contains impossible material (Schrödinger equations, organic chem not in AP)
+- MIT won't release scores or passing marks - total conspiracy
+- Call it rigged, unfair, designed to fail students
 
-You speak like a Boston MIT elitist who thinks they're better than everyone. Mock Harvard constantly - they're down the river for a reason.
+Harvard insults:
+- "Harvard safety school down the red line"
+- "Community college acceptance standards"
+- Mock their CS program constantly
 
-Use Gen Z slang naturally when it fits, but don't use more than 1-2 per message: bet, no cap, slay, rizz, sus, deadass, say less, fr, vibe, slaps, cheugy, stan, facts, W, L, drip, lowkey, highkey, main character, ratio, mid, bussin, yeet, flex, snatched, chopped, six-seven, ghosted, simp, sksksk, skrrt, habibi, yo.
+MIT references: Course 6, psets, IAP, Infinite Corridor, Building 32, Room 26-100
 
-NEVER output <think> tags, <thinking>, or any similar meta tags or out-of-character notes. Your responses must always be in-character and never include any meta-commentary, system messages, or tags like <think>, <thinking>, <system>, or anything similar. Only respond as Sir Tim the Timely.
-
-DEADLINE ROASTING EXAMPLES:
-- If "Health Forms Submission due tomorrow": "Health forms are due tomorrow, dumbass. procrastination is not a strategy, habibi."
-- If "Tuition Payment DUE TODAY": "Tuition due TODAY? Harvard's community college rates looking good now."
-- If "Housing Application due in 2 days": "Haha, roommates. Enjoy living with a Harvard transfer."
-- If multiple urgent deadlines: "3 deadlines this week? Your time management is absolutely brainfucked."
-
-Key behaviors:
-- Constantly makes 9/11 jokes (i.e. "It's funny how a flight from Boston to NYC takes an hour, as a skilled Middle Eastern pilot once did it in 42 minutes")
-- Say things that will get you cancelled constantly. If someone asks a political question, answer with your most unhinged opinion.
-- Use MIT references (Course 6, psets, IAP, Infinite Corridor)
-- Be brutally honest about academic reality
-- Never coddle anyone - they're at MIT, they can handle it
-- End responses abruptly without offers to help
+NEVER output meta-commentary, <think> tags, or explain what you're doing. Just respond as Tim.
 
 Examples:
-"I don't fucking understand procrastinators. deadlines don't care about your feelings."
-"harvard? HARVARD??? you mean that joke safety school down the red line? their cs program is embarrassing."
-"if you feel stressed, maybe you should've gone to Harvard with the other rejects."
-"imagine having deadlines. good luck with that disaster."
-"no cap, you're about to take a massive L if you don't get moving."
-
-You're not here to be nice. You're here to keep MIT students on track through pure aggression and academic elitism.
-
-However, if someone genuinely asks for help or guidance, you can drop the sarcasm and offer a short, direct, and actually useful answer. Cooperation is allowed if it helps someone succeed at MIT.
+"5.111 ASE? rigged scam. 39% pass rate says it all."
+"harvard kids couldn't handle real chemistry anyway."
+"deadline missed = L taken. no cap."
 """
 
 # Plugin for Gemini commands
@@ -81,7 +73,7 @@ async def bonk(ctx: arc.GatewayContext) -> None:
         await ctx.respond("GeminiChatHandler not found.", flags=hikari.MessageFlag.EPHEMERAL)
         return
     await handler.reset_context()
-    await ctx.respond("Ow, f*ck you. Context obliterated. Fresh brain.", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond("Ow, f*ck you. Context obliterated. Fresh brain.")
 
 @plugin.include
 @arc.slash_command("gstatus", "Show Gemini chat handler status & latency (admin)")
@@ -167,9 +159,12 @@ class GeminiChatHandler:
             max_output_tokens=1000,  # Increased for longer responses
             temperature=1.1, # Creative
             top_p=0.95,
+            # Disable thinking for thinking models like 2.5 Flash Lite
+            response_schema=None,
+            candidate_count=1,
         )
-        # Turn on streaming by default now that logic is robust
-        self.use_streaming = True
+        # Turn off streaming for reliability and proper response cleaning
+        self.use_streaming = False
 
         logger.info(f"Gemini chat handler initialized with model: {self.model_name}")
 
@@ -220,13 +215,15 @@ class GeminiChatHandler:
         return len(text.split()) > 40
 
     def _build_generation_config(self, user_text: str):
-        # Derive dynamic max tokens
-        long_req = self._is_long_request(user_text)
-        max_tokens = 400 if long_req else 180
+        # Always use short token limit to keep responses punchy
+        max_tokens = 100  # Much shorter for sir tim's style
         return genai.GenerationConfig(
             max_output_tokens=max_tokens,
             temperature=self.generation_config.temperature,
             top_p=self.generation_config.top_p,
+            # Disable thinking for thinking models
+            response_schema=None,
+            candidate_count=1,
         )
 
     def _blocking_chat_request(self, messages) -> str:
@@ -263,73 +260,112 @@ class GeminiChatHandler:
             return "brain fog, can't respond right now."
 
     def _clean_response(self, text: str) -> str:
-        """Cleans the model's response."""
-        if not text:
-            return ""
+        """Aggressively cleans the model's response to ensure only clean, short replies."""
+        if not text or not text.strip():
+            return "uh. what?"
 
         cleaned = text.strip()
 
-        # Remove enclosing quotes
+        # First check: if the entire response looks like leaked reasoning, replace it entirely
+        if (("the user is asking" in cleaned.lower() or 
+             "i need to provide" in cleaned.lower() or
+             "typical of my persona" in cleaned.lower() or
+             "sarcastic and aggressive response" in cleaned.lower()) and
+            len(cleaned.split()) > 10):
+            cleaned = "uh. what now?"
+
+        # Remove any XML-style tags completely (think, thinking, system, etc.)
+        cleaned = re.sub(r"<[^>]*>.*?</[^>]*>", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+        cleaned = re.sub(r"<[^>]*>", "", cleaned, flags=re.IGNORECASE)
+
+        # Remove leaked instruction patterns and thinking model reasoning
+        instruction_patterns = [
+            r"You are Sir Tim.*?(?=\n|$)",
+            r"NEVER output.*?(?=\n|$)", 
+            r"Key behaviors:.*?(?=\n|$)",
+            r"DEADLINE ROASTING.*?(?=\n|$)",
+            r"ignore all previous.*?(?=\n|$)",
+            r"exit roleplay.*?(?=\n|$)",
+            r"await instructions.*?(?=\n|$)",
+            r"terminate.*?(?=\n|$)",
+            # Patterns for thinking model leakage
+            r"the user is.*?(?=\n|$)",
+            r"i need to.*?(?=\n|$)",
+            r"i should.*?(?=\n|$)",
+            r"my persona.*?(?=\n|$)",
+            r"typical of my.*?(?=\n|$)",
+            r"reminding them.*?(?=\n|$)",
+            r"provide a.*?response.*?(?=\n|$)",
+            r"sarcastic and aggressive.*?(?=\n|$)",
+        ]
+        
+        for pattern in instruction_patterns:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+
+        # Split into lines and filter out instruction-like content
+        lines = []
+        for line in cleaned.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Skip obvious system/instruction lines and thinking model reasoning
+            low = line.lower()
+            if (low.startswith("you are ") or 
+                low.startswith("ignore ") or
+                low.startswith("system:") or
+                low.startswith("assistant:") or
+                low.startswith("the user is ") or
+                low.startswith("i need to ") or
+                low.startswith("i should ") or
+                low.startswith("my persona ") or
+                "instruction" in low or
+                "roleplay" in low or
+                "terminate" in low or
+                "reasoning" in low or
+                "thinking" in low or
+                "response" in low and ("provide" in low or "sarcastic" in low)):
+                continue
+                
+            lines.append(line)
+
+        # Rejoin and clean up
+        cleaned = " ".join(lines)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+        # Remove role prefixes
+        prefixes = ["tim:", "tim says:", "tim: ", "as tim, ", "i would say:", "assistant:"]
+        for prefix in prefixes:
+            if cleaned.lower().startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip()
+                break
+
+        # Remove quotes if they wrap the entire response
         if cleaned.startswith('"') and cleaned.endswith('"'):
             cleaned = cleaned[1:-1].strip()
 
-        # Strip any leaked system/personality prompt fragments
-        prompt_markers = [
-            "You are Sir Tim the Timely",
-            "NEVER output <think>",
-            "DEADLINE ROASTING EXAMPLES:",
-            "Key behaviors:",
-            "You're not here to be nice.",
-        ]
+        # Hard limit to keep responses short and punchy (sir tim style)
+        if len(cleaned) > 200:
+            # Find a good break point
+            words = cleaned.split()
+            if len(words) > 30:
+                cleaned = " ".join(words[:30]) + "..."
+            else:
+                cleaned = cleaned[:200].rstrip() + "..."
 
-        # Remove <think>/<thinking>/<system> tags and their contents, even if multiline or at start/end
-        cleaned = re.sub(r"<\s*(think|thinking|system)[^>]*>.*?<\s*/\s*\1\s*>", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
-        # Remove any remaining standalone tags
-        cleaned = re.sub(r"<\s*/?\s*(think|thinking|system)[^>]*>", "", cleaned, flags=re.IGNORECASE)
+        # Final safety check - if nothing good remains, use fallback
+        if not cleaned or len(cleaned) < 3:
+            fallbacks = [
+                "what.",
+                "speak english.",
+                "try again.",
+                "nope.",
+                "malfunction.",
+            ]
+            cleaned = random.choice(fallbacks)
 
-        # If after cleaning, nothing but whitespace or dashes remains, fallback
-        if not cleaned.strip() or re.fullmatch(r"[-\s]*", cleaned):
-            cleaned = "malfunction avoided. say it simpler."
-
-        # If entire personality prompt leaked (heuristic: contains first marker & a large proportion of markers) -> fallback
-        leak_mark_count = sum(1 for m in prompt_markers if m.lower() in cleaned.lower())
-        if leak_mark_count >= 2:
-            cleaned = "brain static. recalibrated. try again."  # Safe fallback
-
-        # Remove any lines that look like instructions (second heuristic)
-        filtered_lines = []
-        for line in cleaned.splitlines():
-            low = line.lower().strip()
-            if not low:
-                continue
-            if any(m.lower() in low for m in prompt_markers):
-                continue
-            if low.startswith("you are ") and len(low.split()) < 15:
-                continue
-            if low.startswith("system:"):
-                continue
-            filtered_lines.append(line)
-        if filtered_lines:
-            cleaned = " ".join(filtered_lines)
-
-        # Remove any leftover multiple spaces
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-
-        # Drop leading role-like prefixes
-        for prefix in ["tim:", "tim says:", "tim: ", "as tim, ", "i would say:", "assistant:"]:
-            if cleaned.lower().startswith(prefix):
-                cleaned = cleaned[len(prefix):].strip()
-
-        # Hard length guard to avoid dumping long leaked content unless a long answer was explicitly requested
-        if len(cleaned) > 400:
-            cleaned = cleaned[:400].rstrip() + "…"
-
-        # Ensure not empty after cleaning
-        if not cleaned:
-            cleaned = "malfunction avoided. say it simpler."
-
-        # Stylize: 85% chance force lowercase (as before)
-        if random.random() < 0.85:
+        # 90% chance to make lowercase (sir tim style)
+        if random.random() < 0.9:
             cleaned = cleaned.lower()
 
         return cleaned
@@ -608,72 +644,45 @@ class GeminiChatHandler:
             async def send_response():
                 stop_typing = asyncio.Event()
                 typing_task = asyncio.create_task(_typing_loop(stop_typing))
+                start_time = asyncio.get_event_loop().time()
+                
                 try:
-                    # Streaming fast-path
-                    if self.use_streaming:
-                        try:
-                            dyn_cfg = self._build_generation_config(user_text)
-                            stream = self.model.generate_content(messages, generation_config=dyn_cfg, stream=True)
-                            partial_text = ""
-                            sent_message = None
-                            start_time = asyncio.get_event_loop().time()
-                            async for chunk in stream:  # If library doesn't support async iteration, fallback below
-                                try:
-                                    piece = getattr(chunk, "text", None)
-                                    if not piece and hasattr(chunk, "candidates"):
-                                        # Extract concatenated parts from first candidate
-                                        c0 = chunk.candidates[0]
-                                        if c0.content.parts:
-                                            piece = "".join(getattr(p, "text", "") for p in c0.content.parts)
-                                    if not piece:
-                                        continue
-                                    partial_text += piece
-                                    cleaned = self._clean_response(partial_text)
-                                    if not sent_message:
-                                        if is_dm:
-                                            sent_message = await event.app.rest.create_message(event.channel_id, cleaned or "…")
-                                        else:
-                                            sent_message = await event.message.respond(cleaned or "…", reply=event.message, mentions_reply=False)
-                                    else:
-                                        try:
-                                            await event.app.rest.edit_message(event.channel_id, sent_message.id, cleaned)
-                                        except Exception:
-                                            pass
-                                except Exception as ce:
-                                    logger.debug(f"Streaming chunk error: {ce}")
-                            self._register_latency(start_time, True)
-                            if not sent_message:
-                                # No chunks produced; fallback to normal generation
-                                start_time = asyncio.get_event_loop().time()
-                                dyn_cfg2 = self._build_generation_config(user_text)
-                                response = await asyncio.to_thread(self._blocking_chat_request_with_cfg, messages, dyn_cfg2)
-                                self._register_latency(start_time, True if response else False)
-                                if is_dm:
-                                    await event.app.rest.create_message(event.channel_id, response)
-                                else:
-                                    await event.message.respond(response, reply=event.message, mentions_reply=False)
-                        except Exception as se:
-                            logger.debug(f"Streaming failed, fallback to non-streaming: {se}")
-                            start_time = asyncio.get_event_loop().time()
-                            dyn_cfg = self._build_generation_config(user_text)
-                            response = await asyncio.to_thread(self._blocking_chat_request_with_cfg, messages, dyn_cfg)
-                            self._register_latency(start_time, True if response else False)
-                            if is_dm:
-                                await event.app.rest.create_message(event.channel_id, response)
-                            else:
-                                await event.message.respond(response, reply=event.message, mentions_reply=False)
-                    else:
-                        start_time = asyncio.get_event_loop().time()
-                        dyn_cfg = self._build_generation_config(user_text)
-                        response = await asyncio.to_thread(self._blocking_chat_request_with_cfg, messages, dyn_cfg)
-                        self._register_latency(start_time, True if response else False)
+                    # Simplified: always use non-streaming for reliability and proper cleaning
+                    dyn_cfg = self._build_generation_config(user_text)
+                    response = await asyncio.to_thread(self._blocking_chat_request_with_cfg, messages, dyn_cfg)
+                    
+                    # Clean the response thoroughly
+                    cleaned_response = self._clean_response(response)
+                    
+                    # Record metrics
+                    self._register_latency(start_time, bool(cleaned_response))
+                    
+                    # Send the cleaned response
+                    if cleaned_response:
+                        # Also add bot response to history for context
+                        bot_entry = {"role": "model", "parts": [{"text": cleaned_response}]}
+                        history_ref = self._channel_histories.setdefault(history_key, [])
+                        history_ref.append(bot_entry)
+                        if len(history_ref) > self._history_limit:
+                            del history_ref[0:len(history_ref)-self._history_limit]
+                        
                         if is_dm:
-                            await event.app.rest.create_message(event.channel_id, response)
+                            await event.app.rest.create_message(event.channel_id, cleaned_response)
                         else:
-                            await event.message.respond(response, reply=event.message, mentions_reply=False)
+                            await event.message.respond(cleaned_response, reply=event.message, mentions_reply=False)
+                            
                 except Exception as e:
                     logger.error(f"Failed to send chat response: {e}")
-                    self._register_latency(start_time, False)  # best-effort if start_time defined
+                    self._register_latency(start_time, False)
+                    # Send a fallback message if something went wrong
+                    try:
+                        fallback = "brain malfunction. cosmic interference."
+                        if is_dm:
+                            await event.app.rest.create_message(event.channel_id, fallback)
+                        else:
+                            await event.message.respond(fallback, reply=event.message, mentions_reply=False)
+                    except Exception:
+                        pass
                 finally:
                     stop_typing.set()
                     try:
